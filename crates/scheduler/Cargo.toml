@@ -1,0 +1,25 @@
+[package]
+name = "scheduler"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "scheduler"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenv = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+
+data = { path = "../data" }
+marketplace = { path = "../marketplace" }
+shared = { path = "../shared" }
+

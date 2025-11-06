@@ -1,0 +1,33 @@
+[package]
+name = "customer-api"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "customer-api"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+config = { workspace = true }
+dotenv = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+shared = { path = "../shared" }
+marketplace = { path = "../marketplace" }
+data = { path = "../data" }
+
+# Authentication
+oauth2 = { workspace = true }
+tower-sessions = { workspace = true }
+cookie = { workspace = true }
+

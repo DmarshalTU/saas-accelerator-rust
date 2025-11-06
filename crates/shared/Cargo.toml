@@ -1,0 +1,25 @@
+[package]
+name = "shared"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+validator = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+config = { workspace = true }
+tokio = { workspace = true }
+jsonwebtoken = "9.2"
+reqwest = { workspace = true }
+async-trait = "0.1"
+tracing = { workspace = true }
+url = "2.5"
+oauth2 = { workspace = true }
+
+[features]
+default = []
+data = []

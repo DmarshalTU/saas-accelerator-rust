@@ -1,0 +1,72 @@
+[workspace]
+members = [
+    "crates/admin-api",
+    "crates/customer-api",
+    "crates/webhook-api",
+    "crates/scheduler",
+    "crates/shared",
+    "crates/data",
+    "crates/marketplace",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["SaaS Accelerator Contributors"]
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
+
+# Azure SDK
+azure_identity = "0.20"
+azure_core = "0.20"
+azure_security_keyvault = "0.22"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+
+# Authentication
+openidconnect = "2.0"
+oauth2 = "4.4"
+axum-login = "0.7"
+tower-sessions = "0.8"
+cookie = "0.18"
+
+# Configuration
+config = "0.14"
+dotenv = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.6", features = ["v4", "serde"] }
+validator = { version = "0.18", features = ["derive"] }
+
+# Email
+lettre = "0.11"
+
+# Background jobs
+background = "0.1"
+

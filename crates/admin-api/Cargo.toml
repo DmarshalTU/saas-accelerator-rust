@@ -1,0 +1,47 @@
+[package]
+name = "admin-api"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "admin-api"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Configuration
+config = { workspace = true }
+dotenv = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Workspace crates
+shared = { path = "../shared" }
+marketplace = { path = "../marketplace" }
+data = { path = "../data" }
+
+# Authentication
+oauth2 = { workspace = true }
+tower-sessions = { workspace = true }
+cookie = { workspace = true }
+

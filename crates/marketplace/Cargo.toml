@@ -1,0 +1,30 @@
+[package]
+name = "marketplace"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Azure SDK
+azure_identity = { workspace = true }
+azure_core = { workspace = true }
+reqwest = { workspace = true }
+url = "2.5"
+
+# Shared
+shared = { path = "../shared" }
+
+# Async
+tokio = { workspace = true }
+async-trait = "0.1"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
