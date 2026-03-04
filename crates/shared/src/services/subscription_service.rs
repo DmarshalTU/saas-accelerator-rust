@@ -1,6 +1,7 @@
 use async_trait::async_trait;
-use crate::models::*;
+use crate::models::{PurchaserResult, SubscriptionResult, TermResult};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 use std::sync::Arc;
 
@@ -49,10 +50,10 @@ pub trait SubscriptionRepositoryTrait: Send + Sync {
     async fn get_all(&self) -> Result<Vec<SubscriptionData>, String>;
 }
 
-/// Plan repository trait for dependency injection (re-export from plan_service)
-pub use super::plan_service::{PlanRepositoryForService as PlanRepositoryTrait, PlanData};
+/// Plan repository trait for dependency injection (re-export from `plan_service`)
+pub use super::plan_service::{PlanData, PlanRepositoryForService as PlanRepositoryTrait};
 
-/// Subscription service trait matching the original C# SubscriptionService
+/// Subscription service trait matching the original C# `SubscriptionService`
 #[async_trait]
 pub trait SubscriptionServiceTrait: Send + Sync {
     async fn add_or_update_partner_subscriptions(
@@ -129,7 +130,7 @@ pub struct SubscriptionData {
     pub customer_name: Option<String>,
 }
 
-/// Subscription Result Extension - matches C# SubscriptionResultExtension
+/// Subscription Result Extension - matches C# `SubscriptionResultExtension`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionResultExtension {
     pub id: Uuid,
@@ -187,24 +188,24 @@ impl From<&str> for SubscriptionStatusEnumExtension {
     }
 }
 
-impl SubscriptionStatusEnumExtension {
-    pub fn to_string(&self) -> String {
-        match self {
-            Self::PendingFulfillmentStart => "PendingFulfillmentStart".to_string(),
-            Self::Subscribed => "Subscribed".to_string(),
-            Self::Unsubscribed => "Unsubscribed".to_string(),
-            Self::PendingActivation => "PendingActivation".to_string(),
-            Self::PendingUnsubscribe => "PendingUnsubscribe".to_string(),
-            Self::ActivationFailed => "ActivationFailed".to_string(),
-            Self::UnsubscribeFailed => "UnsubscribeFailed".to_string(),
-            Self::Suspend => "Suspend".to_string(),
-            Self::UnRecognized => "UnRecognized".to_string(),
-        }
+impl fmt::Display for SubscriptionStatusEnumExtension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::PendingFulfillmentStart => "PendingFulfillmentStart",
+            Self::Subscribed => "Subscribed",
+            Self::Unsubscribed => "Unsubscribed",
+            Self::PendingActivation => "PendingActivation",
+            Self::PendingUnsubscribe => "PendingUnsubscribe",
+            Self::ActivationFailed => "ActivationFailed",
+            Self::UnsubscribeFailed => "UnsubscribeFailed",
+            Self::Suspend => "Suspend",
+            Self::UnRecognized => "UnRecognized",
+        })
     }
 }
 
-impl SubscriptionResultExtension {
-    pub fn default() -> Self {
+impl Default for SubscriptionResultExtension {
+    fn default() -> Self {
         Self {
             id: Uuid::nil(),
             subscribe_id: 0,
@@ -232,7 +233,7 @@ impl SubscriptionResultExtension {
     }
 }
 
-/// Concrete implementation of SubscriptionService
+/// Concrete implementation of `SubscriptionService`
 pub struct SubscriptionServiceImpl {
     subscription_repo: Arc<dyn SubscriptionRepositoryTrait>,
     plan_repo: Arc<dyn PlanRepositoryTrait>,
@@ -317,10 +318,10 @@ impl SubscriptionServiceTrait for SubscriptionServiceImpl {
 
         let mut result = Vec::new();
         for subscription in subscriptions {
-            if let Ok(extension) = self.prepare_subscription_response(&subscription).await {
-                if extension.subscribe_id > 0 {
-                    result.push(extension);
-                }
+            if let Ok(extension) = self.prepare_subscription_response(&subscription).await
+                && extension.subscribe_id > 0
+            {
+                result.push(extension);
             }
         }
         Ok(result)
@@ -347,22 +348,20 @@ impl SubscriptionServiceTrait for SubscriptionServiceImpl {
         &self,
         subscription: &SubscriptionData,
     ) -> Result<SubscriptionResultExtension, String> {
-        let is_metering_supported = if !subscription.amp_plan_id.is_empty() {
-            match self.plan_repo.get_all().await {
-                Ok(plans) => {
-                    plans.into_iter()
-                        .find(|p| p.plan_id == subscription.amp_plan_id)
-                        .and_then(|p| p.is_metering_supported)
-                        .unwrap_or(false)
-                }
-                Err(_) => false,
-            }
-        } else {
+        let is_metering_supported = if subscription.amp_plan_id.is_empty() {
             false
+        } else {
+            self.plan_repo.get_all().await.is_ok_and(|plans| {
+                plans
+                    .iter()
+                    .find(|p| p.plan_id == subscription.amp_plan_id)
+                    .and_then(|p| p.is_metering_supported)
+                    .unwrap_or(false)
+            })
         };
 
         let term_unit = subscription.term.as_deref().unwrap_or("P1M");
-        
+
         Ok(SubscriptionResultExtension {
             id: subscription.amp_subscription_id,
             subscribe_id: subscription.id,
@@ -370,7 +369,9 @@ impl SubscriptionServiceTrait for SubscriptionServiceImpl {
             offer_id: subscription.amp_offer_id.clone(),
             term: TermResult {
                 term_unit: term_unit.to_string(),
-                start_date: subscription.start_date.unwrap_or(chrono::Utc::now()),
+                start_date: subscription
+                    .start_date
+                    .unwrap_or_else(chrono::Utc::now),
                 end_date: subscription.end_date,
             },
             quantity: subscription.amp_quantity,
@@ -435,28 +436,19 @@ impl SubscriptionServiceTrait for SubscriptionServiceImpl {
     ) -> Result<Vec<SubscriptionData>, String> {
         let all_subscriptions = self.subscription_repo.get_all().await?;
         let all_plans = self.plan_repo.get_all().await?;
-        
-        let active_subscriptions: Vec<SubscriptionData> = all_subscriptions
+
+        let metered_plan_ids: std::collections::HashSet<_> = all_plans
+            .into_iter()
+            .filter(|p| p.is_metering_supported == Some(true))
+            .map(|p| p.plan_id)
+            .collect();
+
+        let metered_subscriptions: Vec<SubscriptionData> = all_subscriptions
             .into_iter()
             .filter(|s| s.subscription_status.eq_ignore_ascii_case("Subscribed"))
-            .collect();
-        
-        let metered_plan_ids: Vec<String> = all_plans
-            .into_iter()
-            .filter_map(|p| {
-                if p.is_metering_supported == Some(true) {
-                    Some(p.plan_id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        
-        let metered_subscriptions: Vec<SubscriptionData> = active_subscriptions
-            .into_iter()
             .filter(|s| metered_plan_ids.contains(&s.amp_plan_id))
             .collect();
-        
+
         Ok(metered_subscriptions)
     }
 }

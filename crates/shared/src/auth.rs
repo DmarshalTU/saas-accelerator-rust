@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Claims {
@@ -41,6 +41,7 @@ pub struct JwtValidator {
 }
 
 impl JwtValidator {
+    #[must_use]
     pub fn new(tenant_id: String, resource_id: String, client_id: String) -> Self {
         Self {
             tenant_id,
@@ -67,12 +68,12 @@ impl JwtValidator {
             .get(&oidc_url)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch OIDC configuration: {}", e))?;
+            .map_err(|e| format!("Failed to fetch OIDC configuration: {e}"))?;
 
         let oidc_config: serde_json::Value = response
             .json()
             .await
-            .map_err(|e| format!("Failed to parse OIDC configuration: {}", e))?;
+            .map_err(|e| format!("Failed to parse OIDC configuration: {e}"))?;
 
         let jwks_uri = oidc_config["jwks_uri"]
             .as_str()
@@ -89,27 +90,24 @@ impl JwtValidator {
             .get(&jwks_uri)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch JWKS: {}", e))?;
+            .map_err(|e| format!("Failed to fetch JWKS: {e}"))?;
 
         let jwks: serde_json::Value = jwks_response
             .json()
             .await
-            .map_err(|e| format!("Failed to parse JWKS: {}", e))?;
+            .map_err(|e| format!("Failed to parse JWKS: {e}"))?;
 
         let mut signing_keys = Vec::new();
 
         if let Some(keys) = jwks["keys"].as_array() {
             for key in keys {
-                if let Some(kty) = key["kty"].as_str() {
-                    if kty == "RSA" {
-                        if let Some(n) = key["n"].as_str() {
-                            if let Some(e) = key["e"].as_str() {
-                                if let Ok(decoding_key) = DecodingKey::from_rsa_components(n, e) {
-                                    signing_keys.push(decoding_key);
-                                }
-                            }
-                        }
-                    }
+                if let Some(kty) = key["kty"].as_str()
+                    && kty == "RSA"
+                    && let Some(n) = key["n"].as_str()
+                    && let Some(e) = key["e"].as_str()
+                    && let Ok(decoding_key) = DecodingKey::from_rsa_components(n, e)
+                {
+                    signing_keys.push(decoding_key);
                 }
             }
         }
@@ -118,7 +116,12 @@ impl JwtValidator {
             return Err("No valid signing keys found in JWKS".to_string());
         }
 
-        info!("Fetched {} signing keys from JWKS", signing_keys.len());
+        info!(
+            "Fetched {} signing keys from JWKS (issuer: {}, jwks_uri: {})",
+            signing_keys.len(),
+            issuer,
+            jwks_uri
+        );
 
         Ok(OidcConfiguration {
             issuer,
@@ -143,11 +146,17 @@ impl JwtValidator {
             cache.config = Some(config.clone());
             cache.last_fetched = Some(chrono::Utc::now());
             Ok(config)
+        } else if let Some(ref config) = cache.config {
+            Ok(config.clone())
         } else {
-            Ok(cache.config.as_ref().unwrap().clone())
+            unreachable!("config is Some when !should_refetch && config.is_some()")
         }
     }
 
+    /// Validates a JWT token against the OIDC configuration.
+    ///
+    /// # Errors
+    /// Returns an error string if OIDC config fetch fails, no signing key matches, or tenant/app ID mismatch.
     pub async fn validate_token(&self, token: &str) -> Result<TokenValidationResult, String> {
         let oidc_config = self.get_oidc_configuration().await?;
 
@@ -155,6 +164,7 @@ impl JwtValidator {
         validation.validate_aud = true;
         validation.set_audience(&[&self.client_id]);
         validation.validate_exp = true;
+        validation.set_issuer(&[&oidc_config.issuer]);
         validation.leeway = 0;
 
         let mut last_error = None;
@@ -169,10 +179,10 @@ impl JwtValidator {
                             .extra
                             .get("http://schemas.microsoft.com/identity/claims/tenantid")
                             .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
+                            .map(std::string::ToString::to_string)
                     });
 
-                    if tenant_id.as_ref().map(|s| s.as_str()) != Some(&self.tenant_id) {
+                    if tenant_id.as_deref() != Some(self.tenant_id.as_str()) {
                         return Err(format!(
                             "Tenant ID mismatch. Expected: {}, Got: {:?}",
                             self.tenant_id, tenant_id
@@ -181,7 +191,7 @@ impl JwtValidator {
 
                     let app_id = claims.azp.clone().or_else(|| claims.appid.clone());
 
-                    if app_id.as_ref().map(|s| s.as_str()) != Some(&self.resource_id) {
+                    if app_id.as_deref() != Some(self.resource_id.as_str()) {
                         return Err(format!(
                             "Application ID mismatch. Expected: {}, Got: {:?}",
                             self.resource_id, app_id
@@ -189,7 +199,7 @@ impl JwtValidator {
                     }
 
                     let mut claims_map = HashMap::new();
-                    claims_map.insert("tenant_id".to_string(), tenant_id.clone().unwrap_or_else(|| "".to_string()));
+                    claims_map.insert("tenant_id".to_string(), tenant_id.clone().unwrap_or_else(String::new));
                     if let Some(app_id_val) = &app_id {
                         claims_map.insert("app_id".to_string(), app_id_val.clone());
                     }
@@ -198,20 +208,21 @@ impl JwtValidator {
 
                     return Ok(TokenValidationResult {
                         is_valid: true,
-                        tenant_id: tenant_id,
+                        tenant_id,
                         app_id,
                         claims: claims_map,
                     });
                 }
                 Err(e) => {
                     last_error = Some(e);
-                    continue;
                 }
             }
         }
 
         Err(format!(
-            "Token validation failed with all signing keys: {:?}",
+            "Token validation failed with all signing keys (issuer: {}, jwks_uri: {}): {:?}",
+            oidc_config.issuer,
+            oidc_config.jwks_uri,
             last_error
         ))
     }

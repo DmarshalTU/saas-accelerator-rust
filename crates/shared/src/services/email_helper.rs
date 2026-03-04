@@ -60,6 +60,7 @@ pub struct PlanEventsMappingData {
 }
 
 /// Email Helper
+#[allow(clippy::struct_field_names)]
 pub struct EmailHelper {
     application_config_repo: Arc<dyn ApplicationConfigRepositoryForEmailHelper>,
     email_template_repo: Arc<dyn EmailTemplateRepositoryForEmailHelper>,
@@ -82,6 +83,8 @@ impl EmailHelper {
         }
     }
 
+    /// # Errors
+    /// Returns an error string if template/event lookup or finalize fails.
     pub async fn prepare_email_content(
         &self,
         subscription_id: Uuid,
@@ -99,9 +102,9 @@ impl EmailHelper {
             .events_repo
             .get_by_name(plan_event_name)
             .await?
-            .ok_or_else(|| format!("Event not found: {}", plan_event_name))?;
+            .ok_or_else(|| format!("Event not found: {plan_event_name}"))?;
 
-        let mut email_template_data = if process_status == "failure" {
+        let email_template_data = if process_status == "failure" {
             self.email_template_repo
                 .get_template_for_status("Failed")
                 .await?
@@ -138,10 +141,10 @@ impl EmailHelper {
             .await?;
 
         if let Some(ref event) = event_data {
-            if let Some(ref success_emails) = event.success_state_emails {
-                if !success_emails.is_empty() {
-                    to_recipients = success_emails.clone();
-                }
+            if let Some(ref success_emails) = event.success_state_emails
+                && !success_emails.is_empty()
+            {
+                to_recipients = success_emails.clone();
             }
             copy_to_customer = event.copy_to_customer.unwrap_or(false);
         }
@@ -157,6 +160,8 @@ impl EmailHelper {
         .await
     }
 
+    /// # Errors
+    /// Returns an error string if template lookup or finalize fails.
     pub async fn prepare_metered_email_content(
         &self,
         scheduler_task_name: &str,
@@ -168,7 +173,7 @@ impl EmailHelper {
             .email_template_repo
             .get_template_for_status(subscription_status)
             .await?
-            .ok_or_else(|| format!("Email template not found for status: {}", subscription_status))?;
+            .ok_or_else(|| format!("Email template not found for status: {subscription_status}"))?;
 
         let to_recipients = self
             .application_config_repo
@@ -178,12 +183,12 @@ impl EmailHelper {
 
         let body = email_template_data
             .template_body
-            .unwrap_or_else(|| String::new())
+            .unwrap_or_else(String::new)
             .replace("****SubscriptionName****", subscription_name)
             .replace("****SchedulerTaskName****", scheduler_task_name)
             .replace("****ResponseJson****", response_json);
 
-        let subject = email_template_data.subject.unwrap_or_else(|| String::new());
+        let subject = email_template_data.subject.unwrap_or_else(String::new);
 
         self.finalize_content_email(subject, body, String::new(), String::new(), to_recipients, false)
             .await
@@ -202,12 +207,12 @@ impl EmailHelper {
             .application_config_repo
             .get_by_name("SMTPFromEmail")
             .await?
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_else(String::new);
         let password = self
             .application_config_repo
             .get_by_name("SMTPPassword")
             .await?
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_else(String::new);
         let ssl_str = self
             .application_config_repo
             .get_by_name("SMTPSslEnabled")
@@ -218,7 +223,7 @@ impl EmailHelper {
             .application_config_repo
             .get_by_name("SMTPUserName")
             .await?
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_else(String::new);
         let port_str = self
             .application_config_repo
             .get_by_name("SMTPPort")
@@ -229,7 +234,7 @@ impl EmailHelper {
             .application_config_repo
             .get_by_name("SMTPHost")
             .await?
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_else(String::new);
 
         Ok(EmailContentModel {
             from_email,

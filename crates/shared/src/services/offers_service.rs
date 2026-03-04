@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 use std::sync::Arc;
-use super::plan_service::{OfferRepositoryForService, OfferData};
+use super::plan_service::OfferRepositoryForService;
 
-/// Offers service trait matching the original C# OffersService
+/// Offers service trait matching the original C# `OffersService`
 #[async_trait]
 pub trait OffersServiceTrait: Send + Sync {
     async fn get_offers(&self) -> Result<Vec<OffersModel>, String>;
@@ -30,7 +30,7 @@ pub struct OfferModel {
     pub offer_guid: Uuid,
 }
 
-/// Concrete implementation of OffersService
+/// Concrete implementation of `OffersService`
 pub struct OffersServiceImpl {
     offer_repo: Arc<dyn OfferRepositoryForService>,
 }

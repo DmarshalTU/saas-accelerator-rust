@@ -12,7 +12,7 @@ pub trait WebhookProcessor: Send + Sync {
     ) -> Result<(), String>;
 }
 
-/// Webhook handler trait - matches IWebhookHandler from original
+/// Webhook handler trait - matches `IWebhookHandler` from original
 #[async_trait]
 pub trait WebhookHandler: Send + Sync {
     async fn change_plan(&self, payload: &WebhookPayload) -> Result<(), String>;
@@ -31,6 +31,7 @@ pub struct WebhookProcessorImpl {
 }
 
 impl WebhookProcessorImpl {
+    #[must_use]
     pub fn new(webhook_handler: Box<dyn WebhookHandler>) -> Self {
         Self {
             webhook_handler,

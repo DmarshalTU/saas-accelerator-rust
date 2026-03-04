@@ -4,7 +4,10 @@ use tracing::info;
 
 pub type DbPool = PgPool;
 
-/// Create a database connection pool
+/// Create a database connection pool.
+///
+/// # Errors
+/// Returns `sqlx::Error` if connection or pool creation fails.
 pub async fn create_pool(database_url: &str) -> Result<DbPool, sqlx::Error> {
     info!("Creating database connection pool");
 

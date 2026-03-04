@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { subscriptionsApi, type Subscription } from '../../api/client';
 import { useState } from 'react';
@@ -47,6 +48,9 @@ export default function AdminSubscriptions() {
   return (
     <div>
       <h1>Subscriptions</h1>
+      <p style={{ color: '#7f8c8d', marginBottom: '16px' }}>
+        Click a subscription ID or <strong>Manage</strong> to open it and change plan, quantity, record usage, or unsubscribe.
+      </p>
       <table style={{
         width: '100%',
         backgroundColor: 'white',
@@ -57,7 +61,7 @@ export default function AdminSubscriptions() {
       }}>
         <thead style={{ backgroundColor: '#34495e', color: 'white' }}>
           <tr>
-            <th style={{ padding: '12px', textAlign: 'left' }}>Subscription ID</th>
+            <th style={{ padding: '12px', textAlign: 'left' }}>Subscription</th>
             <th style={{ padding: '12px', textAlign: 'left' }}>Status</th>
             <th style={{ padding: '12px', textAlign: 'left' }}>Plan</th>
             <th style={{ padding: '12px', textAlign: 'left' }}>Quantity</th>
@@ -68,7 +72,11 @@ export default function AdminSubscriptions() {
         <tbody>
           {subscriptions?.map((sub) => (
             <tr key={sub.id} style={{ borderBottom: '1px solid #ecf0f1' }}>
-              <td style={{ padding: '12px' }}>{sub.amp_subscription_id}</td>
+              <td style={{ padding: '12px' }}>
+                <Link to={`/admin/subscriptions/${sub.amp_subscription_id}`} style={{ color: '#3498db' }}>
+                  {sub.amp_subscription_id}
+                </Link>
+              </td>
               <td style={{ padding: '12px' }}>
                 <span style={{
                   padding: '4px 8px',
@@ -84,6 +92,21 @@ export default function AdminSubscriptions() {
               <td style={{ padding: '12px' }}>{sub.amp_quantity}</td>
               <td style={{ padding: '12px' }}>{sub.purchaser_email || '-'}</td>
               <td style={{ padding: '12px' }}>
+                <Link
+                  to={`/admin/subscriptions/${sub.amp_subscription_id}`}
+                  style={{
+                    display: 'inline-block',
+                    padding: '6px 12px',
+                    backgroundColor: '#27ae60',
+                    color: 'white',
+                    textDecoration: 'none',
+                    borderRadius: '4px',
+                    marginRight: '8px',
+                    fontSize: '13px',
+                  }}
+                >
+                  Manage
+                </Link>
                 {sub.subscription_status === 'PendingFulfillmentStart' && (
                   <button
                     onClick={() => activateMutation.mutate(sub.amp_subscription_id)}

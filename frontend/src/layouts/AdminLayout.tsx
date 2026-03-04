@@ -8,6 +8,8 @@ export default function AdminLayout() {
     { path: '/admin/subscriptions', label: 'Subscriptions' },
     { path: '/admin/plans', label: 'Plans' },
     { path: '/admin/offers', label: 'Offers' },
+    { path: '/admin/users', label: 'Users' },
+    { path: '/admin/scheduler', label: 'Scheduler' },
     { path: '/admin/config', label: 'Configuration' },
   ];
 
@@ -19,7 +21,10 @@ export default function AdminLayout() {
         color: 'white',
         padding: '20px',
       }}>
-        <h2 style={{ marginBottom: '30px' }}>Admin Portal</h2>
+        <h2 style={{ marginBottom: '4px' }}>Admin Portal</h2>
+        <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.8)', marginBottom: '20px' }}>
+          Subscriptions, plans, offers, config
+        </p>
         <nav>
           <ul style={{ listStyle: 'none' }}>
             {navItems.map((item) => (

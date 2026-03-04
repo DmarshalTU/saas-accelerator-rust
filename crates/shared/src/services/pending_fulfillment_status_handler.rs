@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use std::sync::Arc;
 use tracing::info;
-use super::status_handlers::*;
+use super::status_handlers::{
+    AbstractSubscriptionStatusHandler, SubscriptionLogAttributes, SubscriptionStatusHandler,
+};
 use super::pending_activation_status_handler::{SubscriptionLogRepositoryHelper, SubscriptionAuditLogData};
 
 /// Pending Fulfillment Status Handler
@@ -40,7 +42,7 @@ impl SubscriptionStatusHandler for PendingFulfillmentStatusHandler {
                 .update_status_for_subscription(subscription_id, "PendingActivation", true)
                 .await
             {
-                Ok(_) => {
+                Ok(()) => {
                     let audit_log = SubscriptionAuditLogData {
                         id: 0,
                         subscription_id: subscription.id,
@@ -53,7 +55,7 @@ impl SubscriptionStatusHandler for PendingFulfillmentStatusHandler {
                     self.subscription_log_repo.save(&audit_log).await?;
                 }
                 Err(ex) => {
-                    let error_description = format!("Exception: {} :: Inner Exception: None", ex);
+                    let error_description = format!("Exception: {ex} :: Inner Exception: None");
                     info!("{}", error_description);
 
                     self.base

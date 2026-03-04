@@ -3,6 +3,7 @@ members = [
     "crates/admin-api",
     "crates/customer-api",
     "crates/webhook-api",
+    "crates/webhook",
     "crates/scheduler",
     "crates/shared",
     "crates/data",
@@ -12,9 +13,14 @@ resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["SaaS Accelerator Contributors"]
 license = "MIT"
+description = "Microsoft SaaS Accelerator - Rust port"
+repository = "https://github.com/azure/commercial-marketplace-saas-accelerator"
+readme = "README.md"
+keywords = ["saas", "marketplace", "azure"]
+categories = ["web-programming"]
 
 [workspace.dependencies]
 # Async runtime
@@ -22,7 +28,7 @@ tokio = { version = "1.35", features = ["full"] }
 
 # Web framework
 axum = { version = "0.7", features = ["macros"] }
-tower = "0.4"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
 
 # Serialization
@@ -69,4 +75,3 @@ lettre = "0.11"
 
 # Background jobs
 background = "0.1"
-

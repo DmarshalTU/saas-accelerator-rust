@@ -2,6 +2,21 @@
 name = "data"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = "deny"
+nursery = "deny"
+# cargo = "deny"  # Disabled: multiple_crate_versions needs network in CI/sandbox
 
 [dependencies]
 sqlx = { workspace = true }
@@ -14,4 +29,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 shared = { path = "../shared" }
+
+[dev-dependencies]
+serde_json = { workspace = true }
 

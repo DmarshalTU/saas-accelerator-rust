@@ -2,11 +2,11 @@ use data::models::SubscriptionAuditLog;
 use data::repositories::*;
 use shared::models::WebhookPayload;
 use shared::services::{
-    SubscriptionServiceTrait, SubscriptionData, SubscriptionStatusHandler,
+    SubscriptionServiceTrait, SubscriptionStatusHandler,
     ApplicationLogServiceTrait,
 };
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 pub struct WebhookHandler {

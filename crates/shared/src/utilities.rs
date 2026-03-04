@@ -6,13 +6,11 @@ pub struct UrlValidator;
 impl UrlValidator {
     /// Validates the URL for HTTPS.
     /// Helps validate if the URL is a valid HTTPS URL.
+    #[must_use]
     pub fn is_valid_url_https(url: &str) -> bool {
-        match Url::parse(url) {
-            Ok(parsed_url) => {
-                parsed_url.scheme() == "https" && parsed_url.port_or_known_default() == Some(443)
-            }
-            Err(_) => false,
-        }
+        Url::parse(url).is_ok_and(|parsed_url| {
+            parsed_url.scheme() == "https" && parsed_url.port_or_known_default() == Some(443)
+        })
     }
 }
 

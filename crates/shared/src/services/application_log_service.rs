@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Application log service trait matching the original C# ApplicationLogService
+/// Application log service trait matching the original C# `ApplicationLogService`
 #[async_trait]
 pub trait ApplicationLogServiceTrait: Send + Sync {
     async fn add_application_log(&self, log_message: &str) -> Result<(), String>;
@@ -23,7 +23,7 @@ pub trait ApplicationLogRepositoryTrait: Send + Sync {
     async fn get_logs(&self) -> Result<Vec<ApplicationLogData>, String>;
 }
 
-/// Concrete implementation of ApplicationLogService
+/// Concrete implementation of `ApplicationLogService`
 pub struct ApplicationLogServiceImpl {
     application_log_repo: Arc<dyn ApplicationLogRepositoryTrait>,
 }

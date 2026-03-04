@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use uuid::Uuid;
+use std::fmt;
 use std::sync::Arc;
-use tracing::info;
+use uuid::Uuid;
 
 /// Status handler trait for processing subscription status changes
 #[async_trait]
@@ -23,18 +23,19 @@ pub enum SubscriptionLogAttributes {
     Deployment = 4,
 }
 
-impl SubscriptionLogAttributes {
-    pub fn to_string(&self) -> String {
-        match self {
-            Self::Plan => "Plan".to_string(),
-            Self::Status => "Status".to_string(),
-            Self::Quantity => "Quantity".to_string(),
-            Self::Deployment => "Deployment".to_string(),
-        }
+impl fmt::Display for SubscriptionLogAttributes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Plan => "Plan",
+            Self::Status => "Status",
+            Self::Quantity => "Quantity",
+            Self::Deployment => "Deployment",
+        })
     }
 }
 
 /// Abstract base class for subscription status handlers - provides helper methods
+#[allow(clippy::struct_field_names)]
 pub struct AbstractSubscriptionStatusHandler {
     subscription_repo: Arc<dyn SubscriptionRepositoryHelper>,
     plan_repo: Arc<dyn PlanRepositoryHelper>,
@@ -72,17 +73,23 @@ impl AbstractSubscriptionStatusHandler {
         }
     }
 
+    /// # Errors
+    /// Returns an error string if the subscription is not found.
     pub async fn get_subscription_by_id(&self, subscription_id: Uuid) -> Result<SubscriptionData, String> {
         self.subscription_repo
             .get_by_amp_subscription_id(subscription_id)
             .await?
-            .ok_or_else(|| format!("Subscription not found: {}", subscription_id))
+            .ok_or_else(|| format!("Subscription not found: {subscription_id}"))
     }
 
+    /// # Errors
+    /// Propagates repository errors.
     pub async fn get_plan_by_id(&self, plan_id: &str) -> Result<Option<PlanData>, String> {
         self.plan_repo.get_by_plan_id(plan_id).await
     }
 
+    /// # Errors
+    /// Propagates repository errors.
     pub async fn get_user_by_id(&self, user_id: Option<i32>) -> Result<Option<UserData>, String> {
         if let Some(id) = user_id {
             self.user_repo.get_by_id(id).await
@@ -93,6 +100,7 @@ impl AbstractSubscriptionStatusHandler {
 }
 
 impl AbstractSubscriptionStatusHandler {
+    #[must_use]
     pub fn subscription_repo(&self) -> &Arc<dyn SubscriptionRepositoryHelper> {
         &self.subscription_repo
     }

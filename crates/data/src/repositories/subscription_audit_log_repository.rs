@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::models::SubscriptionAuditLog;
 use crate::pool::DbPool;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use uuid::Uuid;
 
 #[async_trait]
@@ -43,7 +43,7 @@ impl SubscriptionAuditLogRepository for PostgresSubscriptionAuditLogRepository {
         .bind(&log.attribute)
         .bind(&log.old_value)
         .bind(&log.new_value)
-        .bind(log.create_date.unwrap_or_else(|| Utc::now()))
+        .bind(log.create_date.unwrap_or_else(Utc::now))
         .bind(log.create_by)
         .fetch_one(&self.pool)
         .await?;

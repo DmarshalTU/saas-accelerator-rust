@@ -55,7 +55,7 @@ impl EmailTemplateRepository for PostgresEmailTemplateRepository {
         .fetch_optional(&self.pool)
         .await?;
         
-        Ok(result.and_then(|r| r.0).unwrap_or_else(|| String::new()))
+        Ok(result.and_then(|r| r.0).unwrap_or_default())
     }
 
     async fn get_all(&self) -> Result<Vec<EmailTemplate>, sqlx::Error> {

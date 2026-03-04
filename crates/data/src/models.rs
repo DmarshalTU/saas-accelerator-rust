@@ -174,6 +174,15 @@ pub struct PlanEventsMapping {
     pub copy_to_customer: Option<bool>,
 }
 
+/// Plan Attribute Mapping entity (`plan_id` -> `offer_attribute_id` link)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PlanAttributeMapping {
+    pub plan_attribute_id: i32,
+    pub plan_id: i32,
+    pub offer_attribute_id: i32,
+    pub create_date: Option<DateTime<Utc>>,
+}
+
 /// Offer Attributes entity
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OfferAttributes {
@@ -182,8 +191,76 @@ pub struct OfferAttributes {
     pub parameter_id: Option<String>,
     pub display_name: Option<String>,
     pub description: Option<String>,
+    #[serde(rename = "type")]
+    #[sqlx(rename = "type")]
     pub type_: Option<String>,
     pub values_list: Option<String>,
     pub create_date: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_serialize_deserialize_roundtrip() {
+        let user = User {
+            user_id: 1,
+            email_address: Some("test@example.com".to_string()),
+            created_date: None,
+            full_name: Some("Test User".to_string()),
+        };
+        let j = serde_json::to_string(&user).unwrap();
+        let u2: User = serde_json::from_str(&j).unwrap();
+        assert_eq!(user.user_id, u2.user_id);
+        assert_eq!(user.email_address, u2.email_address);
+        assert_eq!(user.full_name, u2.full_name);
+    }
+
+    #[test]
+    fn subscription_serialize_deserialize_roundtrip() {
+        let sub = Subscription {
+            id: 1,
+            amp_subscription_id: Uuid::nil(),
+            subscription_status: "Subscribed".to_string(),
+            amp_plan_id: "plan1".to_string(),
+            amp_offer_id: "offer1".to_string(),
+            is_active: Some(true),
+            create_by: Some(1),
+            create_date: None,
+            modify_date: None,
+            user_id: Some(1),
+            name: Some("My Subscription".to_string()),
+            amp_quantity: 10,
+            purchaser_email: None,
+            purchaser_tenant_id: None,
+            term: Some("P1Y".to_string()),
+            start_date: None,
+            end_date: None,
+        };
+        let j = serde_json::to_string(&sub).unwrap();
+        let s2: Subscription = serde_json::from_str(&j).unwrap();
+        assert_eq!(sub.id, s2.id);
+        assert_eq!(sub.subscription_status, s2.subscription_status);
+        assert_eq!(sub.amp_plan_id, s2.amp_plan_id);
+    }
+
+    #[test]
+    fn plan_serialize_deserialize_roundtrip() {
+        let plan = Plan {
+            id: 1,
+            plan_id: "plan_guid_1".to_string(),
+            description: Some("A plan".to_string()),
+            display_name: Some("Plan One".to_string()),
+            is_metering_supported: Some(true),
+            is_per_user: Some(false),
+            plan_guid: Uuid::nil(),
+            offer_id: Uuid::nil(),
+        };
+        let j = serde_json::to_string(&plan).unwrap();
+        let p2: Plan = serde_json::from_str(&j).unwrap();
+        assert_eq!(plan.plan_id, p2.plan_id);
+        assert_eq!(plan.is_metering_supported, p2.is_metering_supported);
+    }
 }
 

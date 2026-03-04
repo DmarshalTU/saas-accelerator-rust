@@ -19,11 +19,15 @@ impl MarketplaceClientBuilder {
         }
     }
 
+    #[must_use]
     pub fn with_credential(mut self, credential: Arc<dyn TokenCredential>) -> Self {
         self.credential = Some(credential);
         self
     }
 
+    /// # Panics
+    /// Panics if the authority host URL is invalid (hardcoded Microsoft login URL).
+    #[must_use]
     pub fn with_client_secret(
         mut self,
         tenant_id: &str,
@@ -46,6 +50,8 @@ impl MarketplaceClientBuilder {
         self
     }
 
+    /// # Panics
+    /// Panics if no credential is set and `DefaultAzureCredential::create` fails, or if the HTTP client fails to build.
     pub fn build(self) -> MarketplaceClient {
         let credential = self.credential.unwrap_or_else(|| {
             Arc::new(
@@ -80,6 +86,9 @@ impl MarketplaceClient {
     }
 
     /// Get an access token for the marketplace API
+    ///
+    /// # Errors
+    /// Returns an error if token acquisition fails.
     pub async fn get_access_token(&self) -> Result<String, azure_core::Error> {
         let token = self
             .credential

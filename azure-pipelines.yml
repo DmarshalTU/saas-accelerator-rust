@@ -1,0 +1,185 @@
+# Azure Pipelines for SaaS Accelerator (Rust Edition)
+# CI: build, test, clippy, frontend build.
+# CD: on main, build Docker images, push to ACR, deploy to Admin and Customer Web Apps.
+
+trigger:
+  branches:
+    include:
+      - main
+      - master
+  paths:
+    exclude:
+      - '*.md'
+      - 'docs/**'
+
+pr:
+  branches:
+    include:
+      - main
+      - master
+  paths:
+    exclude:
+      - '*.md'
+      - 'docs/**'
+
+variables:
+  RUST_BACKTRACE: '1'
+  # Frontend build (set in pipeline variables for production)
+  VITE_ADMIN_API_URL: $(VITE_ADMIN_API_URL)
+  VITE_CUSTOMER_API_URL: $(VITE_CUSTOMER_API_URL)
+  # Deployment (required for Deploy stage; set in Pipelines → Edit → Variables):
+  # DockerRegistryServiceConnection: name of the Docker Registry service connection (ACR)
+  # ContainerRegistryHost: ACR login server, e.g. myregistry.azurecr.io
+  # AzureServiceConnection: name of the Azure Resource Manager service connection
+  # AdminWebAppName: Azure Web App name for the admin site
+  # CustomerWebAppName: Azure Web App name for the customer site
+  # Create environments "production-admin" and "production-customer" in Pipelines → Environments
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Rust
+        displayName: 'Rust build, test, clippy'
+        steps:
+          - task: UseRubyVersion@0
+            displayName: 'Use Ruby (for rustup-init)'
+            inputs:
+              versionSpec: '>= 2.6'
+            continueOnError: true
+
+          - script: |
+              set -e
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              rustc --version
+              cargo --version
+            displayName: 'Install Rust'
+
+          - script: cargo build --workspace --release
+            displayName: 'Cargo build (release)'
+
+          - script: cargo test --workspace --no-fail-fast
+            displayName: 'Cargo test'
+
+          - script: cargo clippy --workspace --all-targets -- -D warnings
+            displayName: 'Cargo clippy'
+
+          - script: |
+              mkdir -p artifacts/rust-binaries
+              cp target/release/admin-api target/release/customer-api target/release/webhook-api target/release/scheduler artifacts/rust-binaries/
+              ls -la artifacts/rust-binaries/
+            displayName: 'Stage release binaries'
+
+          - task: PublishPipelineArtifact@1
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              targetPath: 'artifacts/rust-binaries'
+              artifactName: 'rust-release'
+              publishLocation: 'pipeline'
+            displayName: 'Publish Rust binaries (main only)'
+
+      - job: Frontend
+        displayName: 'Frontend build'
+        dependsOn: []  # Run in parallel with Rust
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+            displayName: 'Use Node.js 20'
+
+          - script: |
+              cd frontend
+              npm ci
+            displayName: 'npm ci'
+
+          - script: |
+              cd frontend
+              npm run build
+            env:
+              VITE_ADMIN_API_URL: $(VITE_ADMIN_API_URL)
+              VITE_CUSTOMER_API_URL: $(VITE_CUSTOMER_API_URL)
+            displayName: 'npm run build'
+
+          - task: PublishPipelineArtifact@1
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              targetPath: 'frontend/dist'
+              artifactName: 'frontend-dist'
+              publishLocation: 'pipeline'
+            displayName: 'Publish frontend dist (main only)'
+
+  - stage: Deploy
+    displayName: 'Deploy to Azure Web Apps'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployAdmin
+        displayName: 'Deploy Admin site'
+        environment: 'production-admin'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  displayName: 'Checkout repo'
+
+                - task: Docker@2
+                  displayName: 'Build and push admin-site image'
+                  inputs:
+                    command: buildAndPush
+                    containerRegistry: $(DockerRegistryServiceConnection)
+                    repository: 'admin-site'
+                    dockerfile: 'deployment/Dockerfile.admin-site'
+                    buildContext: '.'
+                    tags: |
+                      $(Build.BuildId)
+                      latest
+                    arguments: |
+                      VITE_ADMIN_API_URL=$(VITE_ADMIN_API_URL)
+                      VITE_CUSTOMER_API_URL=$(VITE_CUSTOMER_API_URL)
+
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy to Admin Web App'
+                  inputs:
+                    azureSubscription: $(AzureServiceConnection)
+                    appName: $(AdminWebAppName)
+                    containers: '$(ContainerRegistryHost)/admin-site:$(Build.BuildId)'
+
+      - deployment: DeployCustomer
+        displayName: 'Deploy Customer site'
+        environment: 'production-customer'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  displayName: 'Checkout repo'
+
+                - task: Docker@2
+                  displayName: 'Build and push customer-site image'
+                  inputs:
+                    command: buildAndPush
+                    containerRegistry: $(DockerRegistryServiceConnection)
+                    repository: 'customer-site'
+                    dockerfile: 'deployment/Dockerfile.customer-site'
+                    buildContext: '.'
+                    tags: |
+                      $(Build.BuildId)
+                      latest
+                    arguments: |
+                      VITE_ADMIN_API_URL=$(VITE_ADMIN_API_URL)
+                      VITE_CUSTOMER_API_URL=$(VITE_CUSTOMER_API_URL)
+
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy to Customer Web App'
+                  inputs:
+                    azureSubscription: $(AzureServiceConnection)
+                    appName: $(CustomerWebAppName)
+                    containers: '$(ContainerRegistryHost)/customer-site:$(Build.BuildId)'

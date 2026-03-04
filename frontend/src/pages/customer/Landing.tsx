@@ -1,4 +1,4 @@
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { customerApiEndpoints } from '../../api/client';
 import { useState } from 'react';
@@ -40,6 +40,15 @@ export default function CustomerLanding() {
       margin: '0 auto',
     }}>
       <h1>Welcome to SaaS Accelerator</h1>
+      <div style={{ marginTop: '16px', marginBottom: '24px', padding: '12px 16px', backgroundColor: '#ecf0f1', borderRadius: '6px', fontSize: '14px' }}>
+        <strong>Your control:</strong>
+        <ul style={{ margin: '8px 0 0', paddingLeft: '20px', lineHeight: 1.6 }}>
+          <li><Link to="/subscriptions" style={{ color: '#2980b9' }}>My Subscriptions</Link> – enter your email, Load, then open any subscription to <strong>activate</strong>, <strong>change plan</strong>, or <strong>change quantity</strong></li>
+          <li>Here with a <strong>token</strong> (?token=…): activate the subscription with one click</li>
+          <li>Without a token: paste a subscription ID below and click Activate</li>
+          <li><Link to="/privacy" style={{ color: '#2980b9' }}>Privacy</Link> – view privacy policy</li>
+        </ul>
+      </div>
       {token && landingData ? (
         <div style={{ marginTop: '20px' }}>
           <p>Subscription found!</p>

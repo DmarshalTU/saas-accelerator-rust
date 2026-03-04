@@ -1,0 +1,75 @@
+# SaaS Accelerator Rust – Docker Compose (production-like: two sites)
+# Run: docker compose up -d
+# After changing frontend or API code, rebuild images: docker compose up -d --build
+#
+# Two sites (like production: Admin Web App + Customer Web App):
+#   Admin:   http://localhost:3000  (publisher portal: API + UI, / → /admin)
+#   Customer: http://localhost:3001 (landing + customer API + webhook + UI)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: saas-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-saas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saas}
+      POSTGRES_DB: ${POSTGRES_DB:-saas_accelerator}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-saas} -d ${POSTGRES_DB:-saas_accelerator}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile.migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-saas}:${POSTGRES_PASSWORD:-saas}@postgres:5432/${POSTGRES_DB:-saas_accelerator}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  admin:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile.admin-site
+    container_name: saas-admin
+    ports:
+      - "3000:80"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-saas}:${POSTGRES_PASSWORD:-saas}@postgres:5432/${POSTGRES_DB:-saas_accelerator}
+      SaaS_API_TENANT_ID: ${SaaS_API_TENANT_ID:-}
+      SaaS_API_CLIENT_ID: ${SaaS_API_CLIENT_ID:-}
+      SaaS_API_CLIENT_SECRET: ${SaaS_API_CLIENT_SECRET:-}
+      AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID:-}
+      AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID:-}
+      AZURE_AD_CLIENT_SECRET: ${AZURE_AD_CLIENT_SECRET:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  customer:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile.customer-site
+    container_name: saas-customer
+    ports:
+      - "3001:80"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-saas}:${POSTGRES_PASSWORD:-saas}@postgres:5432/${POSTGRES_DB:-saas_accelerator}
+      SaaS_API_TENANT_ID: ${SaaS_API_TENANT_ID:-}
+      SaaS_API_CLIENT_ID: ${SaaS_API_CLIENT_ID:-}
+      SaaS_API_CLIENT_SECRET: ${SaaS_API_CLIENT_SECRET:-}
+      SaaS_API_RESOURCE: ${SaaS_API_RESOURCE:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

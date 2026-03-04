@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS offers (
     id SERIAL PRIMARY KEY,
     offer_id VARCHAR(225) NOT NULL UNIQUE,
     offer_name VARCHAR(225),
-    offer_guid UUID NOT NULL DEFAULT uuid_generate_v4(),
+    offer_guid UUID NOT NULL UNIQUE DEFAULT uuid_generate_v4(),
     create_date TIMESTAMP WITH TIME ZONE,
     user_id INTEGER REFERENCES users(user_id)
 );

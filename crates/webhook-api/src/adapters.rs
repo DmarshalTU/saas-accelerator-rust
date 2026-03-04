@@ -6,7 +6,7 @@ use shared::services::{
     plan_service::{PlanRepositoryForService, PlanData},
     application_log_service::{ApplicationLogRepositoryTrait, ApplicationLogData, ApplicationLogServiceTrait},
     status_handlers::{
-        SubscriptionRepositoryHelper, PlanRepositoryHelper, UserRepositoryHelper,
+        SubscriptionRepositoryHelper, UserRepositoryHelper,
         SubscriptionData as StatusHandlerSubscriptionData, PlanData as StatusHandlerPlanData,
         UserData as StatusHandlerUserData,
     },

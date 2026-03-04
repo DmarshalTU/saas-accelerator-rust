@@ -1,0 +1,33 @@
+[package]
+name = "webhook"
+version.workspace = true
+edition.workspace = true
+description = "Webhook handler logic and router (shared by customer-api and webhook-api)"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[dependencies]
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+async-trait = "0.1"
+sqlx = { workspace = true }
+
+shared = { path = "../shared" }
+marketplace = { path = "../marketplace" }
+data = { path = "../data" }

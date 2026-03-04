@@ -24,6 +24,8 @@ pub enum WebhookAction {
     Reinstate,
     Renew,
     Transfer,
+    #[serde(other)]
+    Unknown,
 }
 
 /// Subscription result model
@@ -147,7 +149,6 @@ pub enum TermUnitEnum {
 impl From<&str> for TermUnitEnum {
     fn from(s: &str) -> Self {
         match s.to_uppercase().as_str() {
-            "P1M" => Self::P1M,
             "P1Y" => Self::P1Y,
             "P2Y" => Self::P2Y,
             "P3Y" => Self::P3Y,
@@ -159,7 +160,7 @@ impl From<&str> for TermUnitEnum {
 }
 
 /// Email Content Model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmailContentModel {
     pub from_email: String,
     pub user_name: String,
@@ -177,24 +178,88 @@ pub struct EmailContentModel {
     pub is_active: bool,
 }
 
-impl Default for EmailContentModel {
-    fn default() -> Self {
-        Self {
-            from_email: String::new(),
-            user_name: String::new(),
-            password: String::new(),
-            port: 0,
-            ssl: false,
-            subject: String::new(),
-            smtp_host: String::new(),
-            body: String::new(),
-            to_emails: String::new(),
-            cc_emails: String::new(),
-            bcc_emails: String::new(),
-            customer_email: None,
-            copy_to_customer: false,
-            is_active: false,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn term_unit_enum_from_str() {
+        assert_eq!(TermUnitEnum::from("P1M"), TermUnitEnum::P1M);
+        assert_eq!(TermUnitEnum::from("p1m"), TermUnitEnum::P1M);
+        assert_eq!(TermUnitEnum::from("P1Y"), TermUnitEnum::P1Y);
+        assert_eq!(TermUnitEnum::from("P5Y"), TermUnitEnum::P5Y);
+        assert_eq!(TermUnitEnum::from("unknown"), TermUnitEnum::P1M);
+    }
+
+    #[test]
+    fn webhook_action_deserialize() {
+        let u: WebhookAction = serde_json::from_str(r#""Unsubscribe""#).unwrap();
+        assert!(matches!(u, WebhookAction::Unsubscribe));
+        let c: WebhookAction = serde_json::from_str(r#""ChangePlan""#).unwrap();
+        assert!(matches!(c, WebhookAction::ChangePlan));
+        let unknown: WebhookAction = serde_json::from_str(r#""FutureAction""#).unwrap();
+        assert!(matches!(unknown, WebhookAction::Unknown));
+    }
+
+    #[test]
+    fn subscription_status_roundtrip() {
+        let s = SubscriptionStatus::Subscribed;
+        let j = serde_json::to_string(&s).unwrap();
+        assert_eq!(j, r#""Subscribed""#);
+        let s2: SubscriptionStatus = serde_json::from_str(&j).unwrap();
+        assert_eq!(s, s2);
+    }
+
+    #[test]
+    fn webhook_payload_deserialize_minimal() {
+        let json = r#"{
+            "activityId": "550e8400-e29b-41d4-a716-446655440000",
+            "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+            "offerId": "offer-1",
+            "timeStamp": "2024-01-15T12:00:00Z",
+            "action": "ChangePlan",
+            "status": "Success"
+        }"#;
+        let p: WebhookPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(p.subscription_id, "550e8400-e29b-41d4-a716-446655440001");
+        assert_eq!(p.offer_id, "offer-1");
+        assert!(matches!(p.action, WebhookAction::ChangePlan));
+        assert_eq!(p.status, "Success");
+    }
+
+    #[test]
+    fn metering_usage_request_roundtrip() {
+        let req = MeteringUsageRequest {
+            resource_id: Uuid::nil(),
+            plan_id: "plan1".to_string(),
+            dimension: "dim1".to_string(),
+            quantity: 42.5,
+            effective_start_time: DateTime::parse_from_rfc3339("2024-01-15T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+        let j = serde_json::to_string(&req).unwrap();
+        let r2: MeteringUsageRequest = serde_json::from_str(&j).unwrap();
+        assert_eq!(req.plan_id, r2.plan_id);
+        assert_eq!(req.dimension, r2.dimension);
+        assert!((req.quantity - r2.quantity).abs() < 1e-9);
+    }
+
+    #[test]
+    fn metering_usage_result_roundtrip() {
+        let res = MeteringUsageResult {
+            usage_event_id: Some(Uuid::nil()),
+            status: "Accepted".to_string(),
+            message_time: None,
+            resource_id: Some(Uuid::nil()),
+            quantity: Some(10.0),
+            dimension: Some("dim".to_string()),
+            effective_start_time: None,
+            plan_id: Some("plan1".to_string()),
+        };
+        let j = serde_json::to_string(&res).unwrap();
+        let r2: MeteringUsageResult = serde_json::from_str(&j).unwrap();
+        assert_eq!(res.status, r2.status);
+        assert_eq!(res.quantity, r2.quantity);
     }
 }
-

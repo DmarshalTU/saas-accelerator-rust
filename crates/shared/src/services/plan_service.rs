@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use std::sync::Arc;
 
-/// Plan service trait matching the original C# PlanService
+/// Plan service trait matching the original C# `PlanService`
 #[async_trait]
 pub trait PlanServiceTrait: Send + Sync {
     async fn get_plans(&self) -> Result<Vec<PlansModel>, String>;
@@ -68,7 +68,7 @@ pub struct OfferData {
     pub user_id: Option<i32>,
 }
 
-/// Concrete implementation of PlanService
+/// Concrete implementation of `PlanService`
 pub struct PlanServiceImpl {
     plan_repo: Arc<dyn PlanRepositoryForService>,
     offer_repo: Arc<dyn OfferRepositoryForService>,
@@ -107,10 +107,10 @@ impl PlanServiceTrait for PlanServiceImpl {
             .collect();
 
         for plan in &mut plans_list {
-            if let Some(offer_id) = plan.offer_id {
-                if let Some(offer) = offer_details.iter().find(|o| o.offer_guid == offer_id) {
-                    plan.offer_name = offer.offer_name.clone();
-                }
+            if let Some(offer_id) = plan.offer_id
+                && let Some(offer) = offer_details.iter().find(|o| o.offer_guid == offer_id)
+            {
+                plan.offer_name.clone_from(&offer.offer_name);
             }
         }
 

@@ -2,6 +2,21 @@
 name = "customer-api"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = "deny"
+nursery = "deny"
+# cargo = "deny"  # disabled so clippy can run without network
 
 [[bin]]
 name = "customer-api"
@@ -25,9 +40,11 @@ uuid = { workspace = true }
 shared = { path = "../shared" }
 marketplace = { path = "../marketplace" }
 data = { path = "../data" }
+webhook = { path = "../webhook" }
 
 # Authentication
 oauth2 = { workspace = true }
 tower-sessions = { workspace = true }
 cookie = { workspace = true }
+
 

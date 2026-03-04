@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// User service trait matching the original C# UserService
+/// User service trait matching the original C# `UserService`
 #[async_trait]
 pub trait UserServiceTrait: Send + Sync {
     async fn add_user(&self, partner_detail: &PartnerDetailViewModel) -> Result<i32, String>;
@@ -32,7 +32,7 @@ pub struct UserData {
     pub full_name: Option<String>,
 }
 
-/// Concrete implementation of UserService
+/// Concrete implementation of `UserService`
 pub struct UserServiceImpl {
     user_repo: Arc<dyn UserRepositoryForService>,
 }
@@ -70,7 +70,7 @@ impl UserServiceTrait for UserServiceImpl {
             .get_partner_detail_from_email(partner_email)
             .await?;
 
-        Ok(user.map(|u| u.user_id).unwrap_or(0))
+        Ok(user.map_or(0, |u| u.user_id))
     }
 }
 

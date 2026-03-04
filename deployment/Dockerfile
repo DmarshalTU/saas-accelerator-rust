@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for SaaS Accelerator Rust Edition
 
-# Build stage
-FROM rust:1.75-slim as builder
+# Build stage (slim-trixie so glibc matches debian:trixie-slim runtime)
+FROM rust:1.93.1-slim-trixie AS builder
 
 WORKDIR /app
 
@@ -27,8 +27,8 @@ RUN cargo build --release --bin customer-api
 WORKDIR /app/crates/webhook-api
 RUN cargo build --release --bin webhook-api
 
-# Runtime stage
-FROM debian:bookworm-slim
+# Runtime stage (trixie-slim so glibc matches rust:1.93.1-slim-trixie builder)
+FROM debian:trixie-slim
 
 WORKDIR /app
 

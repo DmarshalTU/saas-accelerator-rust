@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Common error types for the SaaS Accelerator
+/// Common error types for the `SaaS` Accelerator
 #[derive(Error, Debug)]
 pub enum AcceleratorError {
     #[error("Database error: {0}")]
@@ -29,4 +29,16 @@ pub enum AcceleratorError {
 }
 
 pub type Result<T> = std::result::Result<T, AcceleratorError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accelerator_error_display() {
+        assert!(AcceleratorError::Database("msg".into()).to_string().contains("msg"));
+        assert!(AcceleratorError::NotFound("id".into()).to_string().contains("id"));
+        assert!(AcceleratorError::Validation("invalid".into()).to_string().contains("invalid"));
+    }
+}
 

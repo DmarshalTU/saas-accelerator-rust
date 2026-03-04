@@ -2,6 +2,21 @@
 name = "webhook-api"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = "deny"
+nursery = "deny"
+# cargo = "deny"  # disabled so clippy can run without network
 
 [[bin]]
 name = "webhook-api"
@@ -26,4 +41,6 @@ async-trait = "0.1"
 shared = { path = "../shared" }
 marketplace = { path = "../marketplace" }
 data = { path = "../data" }
+webhook = { path = "../webhook" }
+
 

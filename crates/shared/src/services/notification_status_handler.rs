@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use std::sync::Arc;
 use tracing::info;
-use super::status_handlers::*;
+use super::status_handlers::{AbstractSubscriptionStatusHandler, SubscriptionStatusHandler};
 use super::email_service::EmailServiceTrait;
 use super::email_helper::EmailHelper;
 use super::subscription_service::SubscriptionStatusEnumExtension;
@@ -89,16 +89,14 @@ impl SubscriptionStatusHandler for NotificationStatusHandler {
             .parse::<bool>()
             .unwrap_or(false);
 
-        let mut trigger_email = false;
-        if plan_event_name == "Activate" && is_email_enabled_for_pending_activation &&
-            subscription.subscription_status == SubscriptionStatusEnumExtension::PendingActivation.to_string() {
-            trigger_email = true;
-        } else if plan_event_name == "Activate" && is_email_enabled_for_subscription_activation &&
-            subscription.subscription_status != SubscriptionStatusEnumExtension::PendingActivation.to_string() {
-            trigger_email = true;
-        } else if plan_event_name == "Unsubscribe" && is_email_enabled_for_unsubscription {
-            trigger_email = true;
-        }
+        let trigger_email = (plan_event_name == "Activate"
+            && ((is_email_enabled_for_pending_activation
+                && subscription.subscription_status
+                    == SubscriptionStatusEnumExtension::PendingActivation.to_string())
+                || (is_email_enabled_for_subscription_activation
+                    && subscription.subscription_status
+                        != SubscriptionStatusEnumExtension::PendingActivation.to_string())))
+            || (plan_event_name == "Unsubscribe" && is_email_enabled_for_unsubscription);
 
         if trigger_email {
             let email_content = self
@@ -114,16 +112,14 @@ impl SubscriptionStatusHandler for NotificationStatusHandler {
 
             self.email_service.send_email(&email_content).await?;
 
-            if email_content.copy_to_customer {
-                if let Some(ref user) = user_details {
-                    if let Some(ref email_address) = user.email_address {
-                        if !email_address.is_empty() {
-                            let mut customer_email_content = email_content.clone();
-                            customer_email_content.to_emails = email_address.clone();
-                            self.email_service.send_email(&customer_email_content).await?;
-                        }
-                    }
-                }
+            if email_content.copy_to_customer
+                && let Some(ref user) = user_details
+                && let Some(ref email_address) = user.email_address
+                && !email_address.is_empty()
+            {
+                let mut customer_email_content = email_content.clone();
+                customer_email_content.to_emails = email_address.clone();
+                self.email_service.send_email(&customer_email_content).await?;
             }
         }
 

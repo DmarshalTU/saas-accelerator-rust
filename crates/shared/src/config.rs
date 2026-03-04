@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// SaaS API configuration for Marketplace integration
+/// `SaaS` API configuration for Marketplace integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaaSApiConfig {
     pub ad_authentication_endpoint: String,
@@ -35,6 +35,10 @@ impl Default for SaaSApiConfig {
 }
 
 impl SaaSApiConfig {
+    /// Load config from environment (prefix `SaaS_API_`).
+    ///
+    /// # Errors
+    /// Returns `ConfigError` if required env vars are missing or invalid.
     pub fn from_env() -> Result<Self, config::ConfigError> {
         let cfg = config::Config::builder()
             .add_source(config::Environment::with_prefix("SaaS_API"))
@@ -42,6 +46,7 @@ impl SaaSApiConfig {
         cfg.try_deserialize()
     }
     
+    #[must_use]
     pub fn from_env_var() -> Self {
         Self {
             ad_authentication_endpoint: std::env::var("SaaS_API_AD_AUTHENTICATION_ENDPOINT")
@@ -64,6 +69,20 @@ impl SaaSApiConfig {
                 .unwrap_or(false),
             signed_out_redirect_uri: std::env::var("SaaS_API_SIGNED_OUT_REDIRECT_URI").unwrap_or_default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saa_s_api_config_default() {
+        let cfg = SaaSApiConfig::default();
+        assert_eq!(cfg.ad_authentication_endpoint, "https://login.microsoftonline.com");
+        assert_eq!(cfg.fulfillment_api_base_url, "https://marketplaceapi.microsoft.com/api");
+        assert_eq!(cfg.fulfillment_api_version, "2018-08-31");
+        assert!(!cfg.is_admin_portal_multi_tenant);
     }
 }
 

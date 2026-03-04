@@ -1,0 +1,15 @@
+# Run database migrations with sqlx-cli
+# Same Rust/Debian base as main Dockerfile (trixie for glibc consistency)
+FROM rust:1.93.1-slim-trixie
+
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cargo install sqlx-cli --no-default-features --features postgres
+
+WORKDIR /app
+COPY crates/data/migrations ./migrations
+
+ENTRYPOINT ["sqlx", "migrate", "run"]

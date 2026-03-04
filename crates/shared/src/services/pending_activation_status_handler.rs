@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use std::sync::Arc;
 use tracing::info;
-use super::status_handlers::*;
-use super::subscription_service::SubscriptionStatusEnumExtension;
+use super::status_handlers::{
+    AbstractSubscriptionStatusHandler, SubscriptionLogAttributes, SubscriptionStatusHandler,
+};
 
 /// Pending Activation Status Handler
 pub struct PendingActivationStatusHandler {
@@ -74,7 +75,7 @@ impl SubscriptionStatusHandler for PendingActivationStatusHandler {
                 .activate_subscription(subscription_id, &subscription.amp_plan_id)
                 .await
             {
-                Ok(_) => {
+                Ok(()) => {
                     info!("UpdateWebJobSubscriptionStatus");
                     
                     self.base
@@ -106,7 +107,7 @@ impl SubscriptionStatusHandler for PendingActivationStatusHandler {
                         .await?;
                 }
                 Err(ex) => {
-                    let error_description = format!("Exception: {} :: Inner Exception: None", ex);
+                    let error_description = format!("Exception: {ex} :: Inner Exception: None");
                     self.subscription_log_repo
                         .log_status_during_provisioning(
                             subscription_id,

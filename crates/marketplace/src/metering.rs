@@ -16,6 +16,9 @@ impl MeteringApiClient {
     }
 
     /// Emit a usage event for metered billing
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn emit_usage_event(
         &self,
         request: &MeteringUsageRequest,
@@ -54,26 +57,24 @@ impl MeteringApiClient {
             error!("Failed to emit usage event: {} - {}", status, text);
 
             // Try to parse error response for usage event ID
-            if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(usage_event_id) = error_json.get("usageEventId") {
-                    if let Some(id_str) = usage_event_id.as_str() {
-                        if let Ok(usage_id) = Uuid::parse_str(id_str) {
-                            return Ok(MeteringUsageResult {
-                                usage_event_id: Some(usage_id),
-                                status: "Duplicate".to_string(),
-                                message_time: Some(chrono::Utc::now()),
-                                resource_id: Some(request.resource_id),
-                                quantity: Some(request.quantity),
-                                dimension: Some(request.dimension.clone()),
-                                effective_start_time: Some(request.effective_start_time),
-                                plan_id: Some(request.plan_id.clone()),
-                            });
-                        }
-                    }
-                }
+            if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&text)
+                && let Some(usage_event_id) = error_json.get("usageEventId")
+                && let Some(id_str) = usage_event_id.as_str()
+                && let Ok(usage_id) = Uuid::parse_str(id_str)
+            {
+                return Ok(MeteringUsageResult {
+                    usage_event_id: Some(usage_id),
+                    status: "Duplicate".to_string(),
+                    message_time: Some(chrono::Utc::now()),
+                    resource_id: Some(request.resource_id),
+                    quantity: Some(request.quantity),
+                    dimension: Some(request.dimension.clone()),
+                    effective_start_time: Some(request.effective_start_time),
+                    plan_id: Some(request.plan_id.clone()),
+                });
             }
 
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         let result: UsageEventResponse = response.json().await?;
@@ -81,6 +82,9 @@ impl MeteringApiClient {
     }
 
     /// Emit batch usage events
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn emit_batch_usage_events(
         &self,
         requests: &[MeteringUsageRequest],
@@ -123,14 +127,14 @@ impl MeteringApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to emit batch usage events: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         let result: BatchUsageEventResponse = response.json().await?;
         Ok(result
             .results
             .into_iter()
-            .map(|r| r.into())
+            .map(std::convert::Into::into)
             .collect())
     }
 }
@@ -154,7 +158,7 @@ struct UsageEventResponse {
 
 impl From<UsageEventResponse> for MeteringUsageResult {
     fn from(resp: UsageEventResponse) -> Self {
-        MeteringUsageResult {
+        Self {
             usage_event_id: Some(resp.usage_event_id),
             status: resp.status,
             message_time: Some(resp.message_time),

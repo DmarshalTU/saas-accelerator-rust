@@ -1,9 +1,6 @@
-use async_trait::async_trait;
-use azure_core::auth::TokenCredential;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use shared::models::{SubscriptionResult, SubscriptionStatus};
-use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -21,6 +18,9 @@ impl FulfillmentApiClient {
     }
 
     /// Get all subscriptions
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn list_subscriptions(&self) -> Result<Vec<SubscriptionResult>, anyhow::Error> {
         info!("Fetching all subscriptions from Marketplace API");
 
@@ -42,14 +42,17 @@ impl FulfillmentApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to list subscriptions: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         let subscriptions: Vec<SubscriptionResponse> = response.json().await?;
-        Ok(subscriptions.into_iter().map(|s| s.into()).collect())
+        Ok(subscriptions.into_iter().map(std::convert::Into::into).collect())
     }
 
     /// Get subscription by ID
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn get_subscription(
         &self,
         subscription_id: Uuid,
@@ -74,7 +77,7 @@ impl FulfillmentApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to get subscription: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         let subscription: SubscriptionResponse = response.json().await?;
@@ -82,6 +85,9 @@ impl FulfillmentApiClient {
     }
 
     /// Resolve subscription from marketplace token
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn resolve(
         &self,
         market_place_token: &str,
@@ -107,7 +113,7 @@ impl FulfillmentApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to resolve subscription: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         let resolved: SubscriptionResponse = response.json().await?;
@@ -119,6 +125,9 @@ impl FulfillmentApiClient {
     }
 
     /// Activate subscription
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn activate_subscription(
         &self,
         subscription_id: Uuid,
@@ -149,13 +158,16 @@ impl FulfillmentApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to activate subscription: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         Ok(())
     }
 
     /// Update subscription plan
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn update_subscription_plan(
         &self,
         subscription_id: Uuid,
@@ -189,7 +201,7 @@ impl FulfillmentApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to update subscription plan: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         let operation_id = response
@@ -198,7 +210,7 @@ impl FulfillmentApiClient {
             .and_then(|h| h.to_str().ok())
             .and_then(|s| {
                 s.split('/')
-                    .last()
+                    .next_back()
                     .and_then(|id| Uuid::parse_str(id).ok())
             })
             .ok_or_else(|| anyhow::anyhow!("Failed to extract operation ID"))?;
@@ -207,6 +219,9 @@ impl FulfillmentApiClient {
     }
 
     /// Update subscription quantity
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn update_subscription_quantity(
         &self,
         subscription_id: Uuid,
@@ -240,7 +255,7 @@ impl FulfillmentApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to update subscription quantity: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         let operation_id = response
@@ -249,7 +264,7 @@ impl FulfillmentApiClient {
             .and_then(|h| h.to_str().ok())
             .and_then(|s| {
                 s.split('/')
-                    .last()
+                    .next_back()
                     .and_then(|id| Uuid::parse_str(id).ok())
             })
             .ok_or_else(|| anyhow::anyhow!("Failed to extract operation ID"))?;
@@ -258,6 +273,9 @@ impl FulfillmentApiClient {
     }
 
     /// Delete subscription
+    ///
+    /// # Errors
+    /// Returns an error if the API request fails or the response is not successful.
     pub async fn delete_subscription(
         &self,
         subscription_id: Uuid,
@@ -282,7 +300,7 @@ impl FulfillmentApiClient {
             let status = response.status();
             let text = response.text().await?;
             error!("Failed to delete subscription: {} - {}", status, text);
-            return Err(anyhow::anyhow!("API error: {} - {}", status, text));
+            return Err(anyhow::anyhow!("API error: {status} - {text}"));
         }
 
         // Extract operation ID from response headers
@@ -292,7 +310,7 @@ impl FulfillmentApiClient {
             .and_then(|h| h.to_str().ok())
             .and_then(|s| {
                 s.split('/')
-                    .last()
+                    .next_back()
                     .and_then(|id| Uuid::parse_str(id).ok())
             })
             .ok_or_else(|| anyhow::anyhow!("Failed to extract operation ID"))?;
@@ -321,23 +339,22 @@ struct SubscriptionResponse {
 
 impl From<SubscriptionResponse> for SubscriptionResult {
     fn from(resp: SubscriptionResponse) -> Self {
-        use SubscriptionStatus::*;
+        use SubscriptionStatus::{PendingFulfillmentStart, Subscribed, Suspended, Unsubscribed};
         let status = match resp.saas_subscription_status.as_str() {
-            "NotStarted" => NotStarted,
             "PendingFulfillmentStart" => PendingFulfillmentStart,
             "Subscribed" => Subscribed,
             "Suspended" => Suspended,
             "Unsubscribed" => Unsubscribed,
-            _ => NotStarted,
+            _ => SubscriptionStatus::NotStarted,
         };
 
-        SubscriptionResult {
+        Self {
             id: resp.id,
             subscription_id: resp.id,
             name: resp.subscription_name,
             offer_id: resp.offer_id,
             plan_id: resp.plan_id,
-            quantity: resp.quantity.map(|q| q as i32),
+            quantity: resp.quantity.and_then(|q| q.try_into().ok()),
             status,
             saas_subscription_status: resp.saas_subscription_status,
             beneficiary: resp.beneficiary.into(),
@@ -360,7 +377,7 @@ struct BeneficiaryResponse {
 
 impl From<BeneficiaryResponse> for shared::models::BeneficiaryResult {
     fn from(resp: BeneficiaryResponse) -> Self {
-        shared::models::BeneficiaryResult {
+        Self {
             tenant_id: resp.tenant_id,
             email_id: resp.email_id,
             object_id: resp.object_id,
@@ -382,7 +399,7 @@ struct PurchaserResponse {
 
 impl From<PurchaserResponse> for shared::models::PurchaserResult {
     fn from(resp: PurchaserResponse) -> Self {
-        shared::models::PurchaserResult {
+        Self {
             tenant_id: resp.tenant_id,
             email_id: resp.email_id,
             object_id: resp.object_id,
@@ -403,7 +420,7 @@ struct TermResponse {
 
 impl From<TermResponse> for shared::models::TermResult {
     fn from(resp: TermResponse) -> Self {
-        shared::models::TermResult {
+        Self {
             term_unit: resp.term_unit,
             start_date: resp.start_date,
             end_date: resp.end_date,
@@ -417,5 +434,47 @@ pub struct ResolvedSubscriptionResult {
     pub subscription_id: Uuid,
     pub plan_id: String,
     pub offer_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::models::SubscriptionStatus;
+
+    #[test]
+    fn subscription_response_deserialize_and_convert_to_result() {
+        let json = r#"{
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "subscriptionName": "Test Sub",
+            "offerId": "offer-1",
+            "planId": "plan-1",
+            "quantity": 5,
+            "saasSubscriptionStatus": "Subscribed",
+            "beneficiary": {
+                "tenantId": "550e8400-e29b-41d4-a716-446655440001",
+                "emailId": "ben@example.com",
+                "objectId": null,
+                "puid": null
+            },
+            "purchaser": {
+                "tenantId": "550e8400-e29b-41d4-a716-446655440001",
+                "emailId": "buyer@example.com",
+                "objectId": null,
+                "puid": null
+            },
+            "term": {
+                "termUnit": "P1Y",
+                "startDate": "2024-01-01T00:00:00Z",
+                "endDate": "2025-01-01T00:00:00Z"
+            }
+        }"#;
+        let resp: SubscriptionResponse = serde_json::from_str(json).expect("deserialize");
+        let result = SubscriptionResult::from(resp);
+        assert_eq!(result.name, "Test Sub");
+        assert_eq!(result.offer_id, "offer-1");
+        assert_eq!(result.plan_id, "plan-1");
+        assert_eq!(result.quantity, Some(5));
+        assert!(matches!(result.status, SubscriptionStatus::Subscribed));
+    }
 }
 

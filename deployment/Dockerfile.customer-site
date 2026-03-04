@@ -1,0 +1,34 @@
+# Customer site: customer-api + static UI on one port (production-like)
+
+FROM rust:1.93.1-slim-trixie AS api-builder
+WORKDIR /app
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+WORKDIR /app/crates/customer-api
+RUN cargo build --release --bin customer-api
+
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+COPY frontend/ .
+ARG VITE_ADMIN_API_URL=http://localhost:3000
+ARG VITE_CUSTOMER_API_URL=
+ENV VITE_ADMIN_API_URL=$VITE_ADMIN_API_URL
+ENV VITE_CUSTOMER_API_URL=$VITE_CUSTOMER_API_URL
+RUN npm run build
+
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y ca-certificates libssl3 nginx && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=api-builder /app/target/release/customer-api /app/customer-api
+COPY --from=frontend-builder /app/dist /usr/share/nginx/html
+COPY deployment/nginx-customer-site.conf /etc/nginx/sites-enabled/default
+RUN rm -f /etc/nginx/sites-enabled/default.bak 2>/dev/null; true
+COPY deployment/entrypoint-site.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && sed -i 's/\r$//' /app/entrypoint.sh
+ENV PORT=3001
+EXPOSE 80
+ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"]
+CMD ["customer-api"]

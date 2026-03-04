@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use std::sync::Arc;
 use tracing::info;
-use super::status_handlers::*;
+use super::status_handlers::{
+    AbstractSubscriptionStatusHandler, SubscriptionLogAttributes, SubscriptionStatusHandler,
+};
 use super::pending_activation_status_handler::{FulfillmentApiServiceHelper, SubscriptionLogRepositoryHelper, SubscriptionAuditLogData};
 
 /// Unsubscribe Status Handler
@@ -43,7 +45,7 @@ impl SubscriptionStatusHandler for UnsubscribeStatusHandler {
                 .delete_subscription(subscription_id, &subscription.amp_plan_id)
                 .await
             {
-                Ok(_) => {
+                Ok(()) => {
                     self.base
                         .subscription_repo()
                         .update_status_for_subscription(subscription_id, "Unsubscribed", false)
@@ -69,7 +71,7 @@ impl SubscriptionStatusHandler for UnsubscribeStatusHandler {
                         .await?;
                 }
                 Err(ex) => {
-                    let error_description = format!("Exception: {} :: Inner Exception: None", ex);
+                    let error_description = format!("Exception: {ex} :: Inner Exception: None");
                     self.subscription_log_repo
                         .log_status_during_provisioning(
                             subscription_id,

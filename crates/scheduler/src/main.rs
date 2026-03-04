@@ -1,5 +1,12 @@
-use chrono::{DateTime, Utc, Duration};
-use data::{pool::create_pool, repositories::*};
+use chrono::{DateTime, Utc, Duration, Timelike};
+use data::{
+    pool::create_pool,
+    repositories::{
+        ApplicationConfigRepository, MeteredPlanSchedulerRepository, PlanRepository,
+        PostgresApplicationConfigRepository, PostgresMeteredPlanSchedulerRepository,
+        PostgresPlanRepository, PostgresSubscriptionRepository, SubscriptionRepository,
+    },
+};
 use marketplace::{client::MarketplaceClient, metering::MeteringApiClient};
 use shared::models::MeteringUsageRequest;
 use std::env;
@@ -21,13 +28,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_pool(&database_url).await?;
 
     let config_repo: Arc<dyn ApplicationConfigRepository> =
-        Arc::new(data::repositories::PostgresApplicationConfigRepository::new(pool.clone()));
+        Arc::new(PostgresApplicationConfigRepository::new(pool.clone()));
     let scheduler_repo: Arc<dyn MeteredPlanSchedulerRepository> =
-        Arc::new(data::repositories::PostgresMeteredPlanSchedulerRepository::new(pool.clone()));
+        Arc::new(PostgresMeteredPlanSchedulerRepository::new(pool.clone()));
     let subscription_repo: Arc<dyn SubscriptionRepository> =
-        Arc::new(data::repositories::PostgresSubscriptionRepository::new(pool.clone()));
+        Arc::new(PostgresSubscriptionRepository::new(pool.clone()));
     let plan_repo: Arc<dyn PlanRepository> =
-        Arc::new(data::repositories::PostgresPlanRepository::new(pool.clone()));
+        Arc::new(PostgresPlanRepository::new(pool.clone()));
 
     let marketplace_base_url = env::var("MARKETPLACE_API_BASE_URL")
         .unwrap_or_else(|_| "https://marketplaceapi.microsoft.com/api".to_string());
@@ -67,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let frequencies = vec![("Hourly", 1), ("Daily", 2), ("Weekly", 3), ("Monthly", 4), ("Yearly", 5), ("OneTime", 6)];
 
     for (frequency_name, frequency_id) in frequencies {
-        let enable_key = format!("Enable{}MeterSchedules", frequency_name);
+        let enable_key = format!("Enable{frequency_name}MeterSchedules");
         let is_enabled = config_repo.get_by_name(&enable_key)
             .await
             .unwrap_or(None)
@@ -85,6 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &subscription_repo,
             &plan_repo,
             frequency_id,
+            frequency_name,
         ).await?;
 
         for item in scheduled_items {
@@ -120,30 +128,31 @@ async fn get_scheduled_items(
     subscription_repo: &Arc<dyn SubscriptionRepository>,
     plan_repo: &Arc<dyn PlanRepository>,
     frequency_id: i32,
+    frequency_name: &str,
 ) -> Result<Vec<ScheduledItem>, sqlx::Error> {
     let schedulers = scheduler_repo.get_all().await?;
-    
+
     let mut items = Vec::new();
     for scheduler in schedulers {
         if scheduler.frequency_id == frequency_id {
             let subscription = subscription_repo.get_by_id(scheduler.subscription_id).await?;
             let plan = plan_repo.get_by_id(scheduler.plan_id).await?;
-            
+
             if let (Some(sub), Some(pl)) = (subscription, plan) {
                 items.push(ScheduledItem {
                     id: scheduler.id,
                     subscription_id: sub.amp_subscription_id,
                     plan_id: pl.plan_id,
-                    dimension: "".to_string(),
+                    dimension: String::new(),
                     quantity: scheduler.quantity,
                     start_date: scheduler.start_date,
                     next_run_time: scheduler.next_run_time,
-                    frequency: "".to_string(),
+                    frequency: frequency_name.to_string(),
                 });
             }
         }
     }
-    
+
     Ok(items)
 }
 
@@ -180,7 +189,7 @@ async fn process_scheduled_item(
 
     if time_diff_hours == 0 {
         info!("Triggering scheduled item {}", item.id);
-        trigger_scheduled_item(pool, metering_client, item).await?;
+        trigger_scheduled_item(pool, metering_client, scheduler_repo, item).await?;
     }
 
     Ok(())
@@ -189,6 +198,7 @@ async fn process_scheduled_item(
 async fn trigger_scheduled_item(
     pool: &data::pool::DbPool,
     metering_client: &MeteringApiClient,
+    scheduler_repo: &Arc<dyn MeteredPlanSchedulerRepository>,
     item: &ScheduledItem,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let usage_request = MeteringUsageRequest {
@@ -213,19 +223,20 @@ async fn trigger_scheduled_item(
                 item.id,
                 &request_json,
                 &response_json,
-                &result.status.unwrap_or_else(|| "Unknown".to_string()),
+                &result.status,
                 item.subscription_id,
             ).await?;
 
-            if result.status.as_ref().map(|s| s == "Accepted").unwrap_or(false) {
-                if let Some(next_run) = calculate_next_run_time(item.start_date, &item.frequency) {
+            if result.status == "Accepted" {
+                let last_run = item.next_run_time.unwrap_or(item.start_date);
+                if let Some(next_run) = calculate_next_run_time(last_run, &item.frequency) {
                     scheduler_repo.update_next_run_time(item.id, next_run).await?;
                 }
             }
         }
         Err(e) => {
             error!("Scheduled Item {} - Error: {}", item.id, e);
-            let error_json = format!("{{\"error\": \"{}\"}}", e);
+            let error_json = format!("{{\"error\": \"{e}\"}}");
             save_audit_log(
                 pool,
                 item.id,
@@ -258,11 +269,11 @@ async fn save_audit_log(
 
     if let Some(sub_id) = sub_db_id {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO metered_audit_logs 
             (subscription_id, request_json, response_json, status_code, created_date, subscription_usage_date, run_by)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#
+            "
         )
         .bind(sub_id)
         .bind(request_json)
@@ -270,7 +281,7 @@ async fn save_audit_log(
         .bind(status)
         .bind(Utc::now())
         .bind(Utc::now())
-        .bind(format!("Scheduler-{}", scheduler_id))
+        .bind(format!("Scheduler-{scheduler_id}"))
         .execute(pool)
         .await?;
     }
@@ -278,11 +289,11 @@ async fn save_audit_log(
     Ok(())
 }
 
-fn calculate_next_run_time(start_date: DateTime<Utc>, frequency: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn calculate_next_run_time(start_date: DateTime<Utc>, frequency: &str) -> Option<DateTime<Utc>> {
     if frequency == "OneTime" {
         return None;
     }
-    
+
     Some(match frequency {
         "Hourly" => start_date + Duration::hours(1),
         "Daily" => start_date + Duration::days(1),
@@ -291,5 +302,47 @@ fn calculate_next_run_time(start_date: DateTime<Utc>, frequency: &str) -> Option
         "Yearly" => start_date + Duration::days(365),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calculate_next_run_time_one_time_returns_none() {
+        let t = Utc::now();
+        assert!(calculate_next_run_time(t, "OneTime").is_none());
+    }
+
+    #[test]
+    fn calculate_next_run_time_hourly_adds_one_hour() {
+        let t = DateTime::parse_from_rfc3339("2024-01-15T12:00:00Z").unwrap().with_timezone(&Utc);
+        let next = calculate_next_run_time(t, "Hourly").unwrap();
+        let expected = DateTime::parse_from_rfc3339("2024-01-15T13:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(next, expected);
+    }
+
+    #[test]
+    fn calculate_next_run_time_daily_adds_one_day() {
+        let t = DateTime::parse_from_rfc3339("2024-01-15T12:00:00Z").unwrap().with_timezone(&Utc);
+        let next = calculate_next_run_time(t, "Daily").unwrap();
+        let expected = DateTime::parse_from_rfc3339("2024-01-16T12:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(next, expected);
+    }
+
+    #[test]
+    fn calculate_next_run_time_weekly_adds_seven_days() {
+        let t = DateTime::parse_from_rfc3339("2024-01-15T12:00:00Z").unwrap().with_timezone(&Utc);
+        let next = calculate_next_run_time(t, "Weekly").unwrap();
+        let expected = DateTime::parse_from_rfc3339("2024-01-22T12:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(next, expected);
+    }
+
+    #[test]
+    fn calculate_next_run_time_unknown_returns_none() {
+        let t = Utc::now();
+        assert!(calculate_next_run_time(t, "Unknown").is_none());
+        assert!(calculate_next_run_time(t, "").is_none());
+    }
 }
 

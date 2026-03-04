@@ -1,0 +1,9 @@
+# Frontend: avoid copying host node_modules into the image
+frontend/node_modules
+frontend/dist
+
+# Git and IDE
+.git
+.cursor
+*.swp
+*.swo

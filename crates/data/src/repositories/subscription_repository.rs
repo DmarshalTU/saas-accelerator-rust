@@ -183,30 +183,33 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
         subscription_id: Option<Uuid>,
         _include_deactivated: bool,
     ) -> Result<Vec<Subscription>, sqlx::Error> {
-        let query = if let Some(sub_id) = subscription_id {
-            sqlx::query_as::<_, Subscription>(
-                "SELECT s.id, s.amp_subscription_id, s.subscription_status, s.amp_plan_id, s.amp_offer_id, 
-                 s.is_active, s.create_by, s.create_date, s.modify_date, s.user_id, s.name, s.amp_quantity, 
-                 s.purchaser_email, s.purchaser_tenant_id, s.term, s.start_date, s.end_date 
-                 FROM subscriptions s
-                 INNER JOIN users u ON s.user_id = u.user_id
-                 WHERE u.email_address = $1 AND s.amp_subscription_id = $2
-                 ORDER BY s.create_date DESC",
-            )
-            .bind(email_address)
-            .bind(sub_id)
-        } else {
-            sqlx::query_as::<_, Subscription>(
-                "SELECT s.id, s.amp_subscription_id, s.subscription_status, s.amp_plan_id, s.amp_offer_id, 
-                 s.is_active, s.create_by, s.create_date, s.modify_date, s.user_id, s.name, s.amp_quantity, 
-                 s.purchaser_email, s.purchaser_tenant_id, s.term, s.start_date, s.end_date 
-                 FROM subscriptions s
-                 INNER JOIN users u ON s.user_id = u.user_id
-                 WHERE u.email_address = $1
-                 ORDER BY s.create_date DESC",
-            )
-            .bind(email_address)
-        };
+        let query = subscription_id.map_or_else(
+            || {
+                sqlx::query_as::<_, Subscription>(
+                    "SELECT s.id, s.amp_subscription_id, s.subscription_status, s.amp_plan_id, s.amp_offer_id, 
+                     s.is_active, s.create_by, s.create_date, s.modify_date, s.user_id, s.name, s.amp_quantity, 
+                     s.purchaser_email, s.purchaser_tenant_id, s.term, s.start_date, s.end_date 
+                     FROM subscriptions s
+                     INNER JOIN users u ON s.user_id = u.user_id
+                     WHERE u.email_address = $1
+                     ORDER BY s.create_date DESC",
+                )
+                .bind(email_address)
+            },
+            |sub_id| {
+                sqlx::query_as::<_, Subscription>(
+                    "SELECT s.id, s.amp_subscription_id, s.subscription_status, s.amp_plan_id, s.amp_offer_id, 
+                     s.is_active, s.create_by, s.create_date, s.modify_date, s.user_id, s.name, s.amp_quantity, 
+                     s.purchaser_email, s.purchaser_tenant_id, s.term, s.start_date, s.end_date 
+                     FROM subscriptions s
+                     INNER JOIN users u ON s.user_id = u.user_id
+                     WHERE u.email_address = $1 AND s.amp_subscription_id = $2
+                     ORDER BY s.create_date DESC",
+                )
+                .bind(email_address)
+                .bind(sub_id)
+            },
+        );
         query.fetch_all(&self.pool).await
     }
 

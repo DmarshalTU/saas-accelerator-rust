@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crate::models::EmailContentModel;
-use tracing::{error, info};
+use tracing::info;
 
 /// Email service trait
 #[async_trait]
@@ -45,7 +45,7 @@ impl EmailServiceTrait for SmtpEmailService {
                     email_content.subject
                 ))
                 .await
-                .map_err(|e| format!("Failed to log: {}", e))?;
+                .map_err(|e| format!("Failed to log: {e}"))?;
             return Ok(());
         }
 
@@ -58,7 +58,7 @@ impl EmailServiceTrait for SmtpEmailService {
         self.log_service
             .add_application_log(&format!("{}: Email sent successfully!", email_content.subject))
             .await
-            .map_err(|e| format!("Failed to log: {}", e))?;
+            .map_err(|e| format!("Failed to log: {e}"))?;
 
         Ok(())
     }
