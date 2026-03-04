@@ -34,6 +34,29 @@ So in production it really is **2 different webapps** — two distinct sites, tw
 
 ---
 
+## Pipeline → Docker → Web App (container)
+
+**Yes:** The pipeline builds Docker images and pushes them to ACR. Each Web App runs your image **as a container** — Azure Web App for Containers pulls the image and starts the container.
+
+**How Azure “routes”:** Azure does **not** route inside the container. It only:
+
+1. Receives HTTP(S) requests for your Web App URL.
+2. Sends each request to the **container on one port** (port **80** in our setup; the Dockerfile has `EXPOSE 80`).
+
+**Who routes inside the container:** The container runs **nginx** on port 80 and the **Rust API** on localhost (e.g. 3000). The entrypoint starts both:
+
+- **nginx** listens on **80** (what Azure talks to).
+- **Rust** (admin-api or customer-api) listens on **3000** (or 3001 for customer) on localhost.
+
+nginx does the internal routing:
+
+- `/api/*`, `/auth/*`, `/health` → proxy to `http://127.0.0.1:3000` (Rust).
+- `/`, `/admin`, `/assets/*` → serve static files from the built frontend (`/usr/share/nginx/html`).
+
+So: **Azure → container:80 → nginx → (Rust on 3000 or static files)**. One port (80) exposed to Azure; routing is entirely inside the container via nginx.
+
+---
+
 ## What the Original Actually Does (Database)
 
 In the **original** .NET SaaS Accelerator, **both** the Admin Web App and the Customer/Portal Web App use the **same** Azure SQL database:
