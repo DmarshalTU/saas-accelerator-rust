@@ -3,8 +3,9 @@
 FROM rust:1.93.1-slim-trixie AS api-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY crates ./crates
+RUN cargo generate-lockfile
 WORKDIR /app/crates/admin-api
 RUN cargo build --release --bin admin-api
 

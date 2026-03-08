@@ -11,47 +11,95 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
+# Log file
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEPLOY_LOG="$SCRIPT_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
+echo "Deployment log started at $(date)" > "$DEPLOY_LOG"
+
 print_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
+    echo "[INFO] $(date +%H:%M:%S) $1" >> "$DEPLOY_LOG"
 }
 
 print_warning() {
     echo -e "${YELLOW}[WARN]${NC} $1"
+    echo "[WARN] $(date +%H:%M:%S) $1" >> "$DEPLOY_LOG"
 }
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+    echo "[ERROR] $(date +%H:%M:%S) $1" >> "$DEPLOY_LOG"
 }
+
+# Run a command with error handling. Logs stdout/stderr on success and failure.
+run_step() {
+    local step_name="$1"
+    shift
+    print_info "$step_name"
+    local output
+    if output=$("$@" 2>&1); then
+        echo "$output" >> "$DEPLOY_LOG"
+        return 0
+    else
+        local exit_code=$?
+        print_error "$step_name FAILED (exit code $exit_code)"
+        echo "[ERROR] $(date +%H:%M:%S) $step_name output:" >> "$DEPLOY_LOG"
+        echo "$output" >> "$DEPLOY_LOG"
+        print_error "See log for details: $DEPLOY_LOG"
+        return $exit_code
+    fi
+}
+
+# Global error trap — catches any unhandled failure
+on_error() {
+    local exit_code=$?
+    local line_no=$1
+    print_error "Script failed at line $line_no (exit code $exit_code)"
+    print_error "Log file: $DEPLOY_LOG"
+}
+trap 'on_error $LINENO' ERR
 
 # Check if required tools are installed
 check_prerequisites() {
     print_info "Checking prerequisites..."
-    
+
     if ! command -v az &> /dev/null; then
         print_error "Azure CLI is not installed. Please install it first."
         exit 1
     fi
-    
+
     if ! command -v cargo &> /dev/null; then
         print_error "Rust/Cargo is not installed. Please install it first."
         exit 1
     fi
-    
+
+    if ! command -v cross &> /dev/null; then
+        print_error "cross is not installed. Install with: cargo install cross --git https://github.com/cross-rs/cross"
+        exit 1
+    fi
+
+    if ! command -v docker &> /dev/null; then
+        print_error "Docker is required for cross-compilation. Please install Docker Desktop."
+        exit 1
+    fi
+
     print_info "Prerequisites check passed"
 }
 
-# Parse command line arguments
-WEB_APP_NAME_PREFIX=""
-RESOURCE_GROUP=""
-LOCATION=""
-PUBLISHER_ADMIN_USERS=""
-TENANT_ID=""
-AZURE_SUBSCRIPTION_ID=""
-AD_APPLICATION_ID=""
-AD_APPLICATION_SECRET=""
-SQL_SERVER_NAME=""
-SQL_DATABASE_NAME=""
+check_prerequisites
+
+# Load environment variables from .env file
+ENV_FILE="$SCRIPT_DIR/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    print_info "Loading configuration from $ENV_FILE"
+    set -a
+    source "$ENV_FILE"
+    set +a
+else
+    print_error "Missing $ENV_FILE — copy deployment/.env.template and fill in your values"
+    exit 1
+fi
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -121,30 +169,39 @@ if [[ -z "$SQL_DATABASE_NAME" ]]; then
     SQL_DATABASE_NAME="${WEB_APP_NAME_PREFIX}AMPSaaSDB"
 fi
 
+ADMIN_WEB_APP="${WEB_APP_NAME_PREFIX}-admin"
+CUSTOMER_WEB_APP="${WEB_APP_NAME_PREFIX}-portal"
+APP_SERVICE_PLAN="${WEB_APP_NAME_PREFIX}-asp"
+ADMIN_URL="https://${ADMIN_WEB_APP}.azurewebsites.net"
+CUSTOMER_URL="https://${CUSTOMER_WEB_APP}.azurewebsites.net"
+
 print_info "Starting deployment with the following configuration:"
 echo "  Web App Name Prefix: $WEB_APP_NAME_PREFIX"
 echo "  Resource Group: $RESOURCE_GROUP"
 echo "  Location: $LOCATION"
 echo "  SQL Server: $SQL_SERVER_NAME"
 echo "  SQL Database: $SQL_DATABASE_NAME"
+echo "  Admin URL: $ADMIN_URL"
+echo "  Customer URL: $CUSTOMER_URL"
 
 # Set Azure subscription if provided
 if [[ -n "$AZURE_SUBSCRIPTION_ID" ]]; then
-    print_info "Setting Azure subscription: $AZURE_SUBSCRIPTION_ID"
-    az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    run_step "Setting Azure subscription: $AZURE_SUBSCRIPTION_ID" \
+        az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 fi
 
-# Build Rust projects
-print_info "Building Rust projects..."
-cargo build --release
+# Build Rust projects (cross-compile for Linux x86_64 via Docker)
+run_step "Building Rust projects (x86_64-unknown-linux-gnu)" \
+    cross build --release --target x86_64-unknown-linux-gnu
 
 # Create resource group
-print_info "Creating resource group: $RESOURCE_GROUP"
-az group create --name "$RESOURCE_GROUP" --location "$LOCATION" || true
+run_step "Creating resource group: $RESOURCE_GROUP" \
+    az group create --name "$RESOURCE_GROUP" --location "$LOCATION" \
+    || print_warning "Resource group may already exist"
 
 # Create PostgreSQL server (Azure Database for PostgreSQL)
-print_info "Creating PostgreSQL server: $SQL_SERVER_NAME"
-az postgres flexible-server create \
+run_step "Creating PostgreSQL server: $SQL_SERVER_NAME" \
+    az postgres flexible-server create \
     --resource-group "$RESOURCE_GROUP" \
     --name "$SQL_SERVER_NAME" \
     --location "$LOCATION" \
@@ -154,20 +211,20 @@ az postgres flexible-server create \
     --tier Burstable \
     --version 14 \
     --storage-size 32 \
+    --yes \
     || print_warning "PostgreSQL server may already exist"
 
 # Create database
-print_info "Creating database: $SQL_DATABASE_NAME"
-az postgres flexible-server db create \
+run_step "Creating database: $SQL_DATABASE_NAME" \
+    az postgres flexible-server db create \
     --resource-group "$RESOURCE_GROUP" \
     --server-name "$SQL_SERVER_NAME" \
     --database-name "$SQL_DATABASE_NAME" \
     || print_warning "Database may already exist"
 
 # Create App Service Plan
-print_info "Creating App Service Plan"
-APP_SERVICE_PLAN="${WEB_APP_NAME_PREFIX}-asp"
-az appservice plan create \
+run_step "Creating App Service Plan: $APP_SERVICE_PLAN" \
+    az appservice plan create \
     --name "$APP_SERVICE_PLAN" \
     --resource-group "$RESOURCE_GROUP" \
     --location "$LOCATION" \
@@ -176,48 +233,43 @@ az appservice plan create \
     || print_warning "App Service Plan may already exist"
 
 # Create Web Apps
-print_info "Creating Web Apps"
-
-# Admin API
-ADMIN_WEB_APP="${WEB_APP_NAME_PREFIX}-admin"
-az webapp create \
+run_step "Creating Admin Web App: $ADMIN_WEB_APP" \
+    az webapp create \
     --name "$ADMIN_WEB_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --plan "$APP_SERVICE_PLAN" \
-    --runtime "RUST:1.75" \
+    --runtime "NODE:20-lts" \
     || print_warning "Admin Web App may already exist"
 
-# Customer API
-CUSTOMER_WEB_APP="${WEB_APP_NAME_PREFIX}-portal"
-az webapp create \
+run_step "Creating Customer Web App: $CUSTOMER_WEB_APP" \
+    az webapp create \
     --name "$CUSTOMER_WEB_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --plan "$APP_SERVICE_PLAN" \
-    --runtime "RUST:1.75" \
+    --runtime "NODE:20-lts" \
     || print_warning "Customer Web App may already exist"
 
-# Webhook API
-WEBHOOK_WEB_APP="${WEB_APP_NAME_PREFIX}-webhook"
-az webapp create \
-    --name "$WEBHOOK_WEB_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --plan "$APP_SERVICE_PLAN" \
-    --runtime "RUST:1.75" \
-    || print_warning "Webhook Web App may already exist"
+# Configure startup commands (run the Rust binary)
+run_step "Setting Admin startup command" \
+    az webapp config set --name "$ADMIN_WEB_APP" --resource-group "$RESOURCE_GROUP" \
+    --startup-file "./admin-api" \
+    || print_warning "Failed to set Admin startup command"
+
+run_step "Setting Customer startup command" \
+    az webapp config set --name "$CUSTOMER_WEB_APP" --resource-group "$RESOURCE_GROUP" \
+    --startup-file "./customer-api" \
+    || print_warning "Failed to set Customer startup command"
 
 # Configure app settings
-print_info "Configuring app settings"
-
-# Get PostgreSQL connection string
 POSTGRES_CONNECTION_STRING=$(az postgres flexible-server show-connection-string \
     --server-name "$SQL_SERVER_NAME" \
     --database-name "$SQL_DATABASE_NAME" \
     --admin-user saasadmin \
-    --admin-password "$(az postgres flexible-server show -n $SQL_SERVER_NAME -g $RESOURCE_GROUP --query administratorLoginPassword -o tsv)" \
-    -s postgresql)
+    --admin-password "$(az postgres flexible-server show -n "$SQL_SERVER_NAME" -g "$RESOURCE_GROUP" --query administratorLoginPassword -o tsv 2>/dev/null || echo 'REPLACE_ME')" \
+    -s postgresql 2>/dev/null || echo "postgresql://saasadmin:REPLACE_ME@${SQL_SERVER_NAME}.postgres.database.azure.com:5432/${SQL_DATABASE_NAME}")
 
-# Set app settings for Admin API
-az webapp config appsettings set \
+run_step "Configuring Admin app settings" \
+    az webapp config appsettings set \
     --name "$ADMIN_WEB_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --settings \
@@ -226,22 +278,77 @@ az webapp config appsettings set \
         "SaaS_API_CLIENT_SECRET=$AD_APPLICATION_SECRET" \
         "SaaS_API_TENANT_ID=$TENANT_ID" \
         "RUST_LOG=info" \
+        "PORT=8080" \
     || print_warning "Failed to set app settings for Admin API"
 
-# Deploy binaries
-print_info "Preparing deployment packages..."
+run_step "Configuring Customer app settings" \
+    az webapp config appsettings set \
+    --name "$CUSTOMER_WEB_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --settings \
+        "DATABASE_URL=$POSTGRES_CONNECTION_STRING" \
+        "SaaS_API_CLIENT_ID=$AD_APPLICATION_ID" \
+        "SaaS_API_CLIENT_SECRET=$AD_APPLICATION_SECRET" \
+        "SaaS_API_TENANT_ID=$TENANT_ID" \
+        "RUST_LOG=info" \
+        "PORT=8080" \
+    || print_warning "Failed to set app settings for Customer API"
 
-# Create deployment directory
-DEPLOY_DIR="deployment/temp"
-mkdir -p "$DEPLOY_DIR"
+# Build frontend
+print_info "Building frontend..."
+cd "$REPO_ROOT/frontend"
+if ! VITE_ADMIN_API_URL="$ADMIN_URL" VITE_CUSTOMER_API_URL="$CUSTOMER_URL" npm ci >> "$DEPLOY_LOG" 2>&1; then
+    print_error "npm ci failed"
+    exit 1
+fi
+if ! VITE_ADMIN_API_URL="$ADMIN_URL" VITE_CUSTOMER_API_URL="$CUSTOMER_URL" npm run build >> "$DEPLOY_LOG" 2>&1; then
+    print_error "npm run build failed"
+    exit 1
+fi
+cd "$REPO_ROOT"
 
-# Copy binaries (when using Azure Web Apps with Rust, we may need to use Docker)
-print_info "Note: For Rust deployment to Azure Web Apps, Docker containers are recommended"
-print_info "See deployment/Dockerfile for containerized deployment"
+# Package Admin site
+print_info "Packaging Admin site..."
+PUBLISH_DIR="$REPO_ROOT/Publish"
+rm -rf "$PUBLISH_DIR"
+mkdir -p "$PUBLISH_DIR/AdminSite" "$PUBLISH_DIR/CustomerSite"
 
-print_info "Deployment script completed successfully!"
-print_info "Next steps:"
-echo "  1. Configure Azure AD applications"
-echo "  2. Run database migrations"
-echo "  3. Deploy using Docker containers or Azure Container Instances"
+cp "target/x86_64-unknown-linux-gnu/release/admin-api" "$PUBLISH_DIR/AdminSite/"
+cp -r "$REPO_ROOT/frontend/dist" "$PUBLISH_DIR/AdminSite/wwwroot"
 
+cd "$PUBLISH_DIR/AdminSite"
+zip -r "$PUBLISH_DIR/AdminSite.zip" . -q
+cd "$REPO_ROOT"
+
+# Package Customer site
+print_info "Packaging Customer site..."
+cp "target/x86_64-unknown-linux-gnu/release/customer-api" "$PUBLISH_DIR/CustomerSite/"
+cp -r "$REPO_ROOT/frontend/dist" "$PUBLISH_DIR/CustomerSite/wwwroot"
+
+cd "$PUBLISH_DIR/CustomerSite"
+zip -r "$PUBLISH_DIR/CustomerSite.zip" . -q
+cd "$REPO_ROOT"
+
+# Deploy via zip deploy (same approach as original .NET SaaS Accelerator)
+run_step "Deploying Admin site via zip deploy" \
+    az webapp deploy \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$ADMIN_WEB_APP" \
+    --src-path "$PUBLISH_DIR/AdminSite.zip" \
+    --type zip
+
+run_step "Deploying Customer site via zip deploy" \
+    az webapp deploy \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$CUSTOMER_WEB_APP" \
+    --src-path "$PUBLISH_DIR/CustomerSite.zip" \
+    --type zip
+
+# Clean up
+rm -rf "$PUBLISH_DIR"
+
+print_info "Deployment completed!"
+print_info "Log file: $DEPLOY_LOG"
+echo ""
+echo "  Admin:    $ADMIN_URL"
+echo "  Customer: $CUSTOMER_URL"
