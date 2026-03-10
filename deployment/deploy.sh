@@ -125,19 +125,29 @@ section "App Registrations"
 
 # 1) Fulfillment API app reg (single-tenant, client credentials)
 if [[ -z "$AD_APPLICATION_ID" ]]; then
-    info "Creating Fulfillment API App Registration..."
-    AD_OBJ_ID=$(az ad app create \
-        --only-show-errors \
-        --sign-in-audience AzureADMyOrg \
+    EXISTING_FULFILL_ID=$(az ad app list \
         --display-name "${WEB_APP_NAME_PREFIX}-FulfillmentAppReg" \
-        --query id -o tsv)
-    AD_APPLICATION_ID=$(az ad app show --id "$AD_OBJ_ID" --query appId -o tsv)
-    az ad sp create --id "$AD_APPLICATION_ID" --only-show-errors >/dev/null
+        --query "[0].appId" -o tsv 2>/dev/null || true)
+    if [[ -n "$EXISTING_FULFILL_ID" ]]; then
+        info "  Reusing existing Fulfillment App Registration: $EXISTING_FULFILL_ID"
+        AD_APPLICATION_ID="$EXISTING_FULFILL_ID"
+        AD_OBJ_ID=$(az ad app show --id "$AD_APPLICATION_ID" --query id -o tsv)
+    else
+        info "Creating Fulfillment API App Registration..."
+        AD_OBJ_ID=$(az ad app create \
+            --only-show-errors \
+            --sign-in-audience AzureADMyOrg \
+            --display-name "${WEB_APP_NAME_PREFIX}-FulfillmentAppReg" \
+            --query id -o tsv)
+        AD_APPLICATION_ID=$(az ad app show --id "$AD_OBJ_ID" --query appId -o tsv)
+        info "  Fulfillment App ID: $AD_APPLICATION_ID"
+    fi
+    az ad sp create --id "$AD_APPLICATION_ID" --only-show-errors >/dev/null 2>&1 || true
     sleep 5
     AD_APPLICATION_SECRET=$(az ad app credential reset \
         --id "$AD_OBJ_ID" \
         --append \
-        --display-name "SaaSAPI" \
+        --display-name "SaaSAPI-$(date +%Y%m%d)" \
         --years 2 \
         --query password -o tsv --only-show-errors)
     info "  Fulfillment App ID: $AD_APPLICATION_ID"
@@ -147,6 +157,13 @@ fi
 
 # 2) Admin Portal SSO app reg (single-tenant, id_token, openid+profile+email)
 if [[ -z "$AD_APPLICATION_ID_ADMIN" ]]; then
+    EXISTING_ADMIN_ID=$(az ad app list \
+        --display-name "${WEB_APP_NAME_PREFIX}-AdminPortalAppReg" \
+        --query "[0].appId" -o tsv 2>/dev/null || true)
+    if [[ -n "$EXISTING_ADMIN_ID" ]]; then
+        info "  Reusing existing Admin Portal App Registration: $EXISTING_ADMIN_ID"
+        AD_APPLICATION_ID_ADMIN="$EXISTING_ADMIN_ID"
+    else
     info "Creating Admin Portal SSO App Registration..."
     ADMIN_APP_REG_BODY=$(cat <<EOF
 {
@@ -174,6 +191,7 @@ EOF
         --body "$ADMIN_APP_REG_BODY" \
         --query appId -o tsv)
     info "  Admin SSO App ID: $AD_APPLICATION_ID_ADMIN"
+    fi  # end else (not existing)
 else
     info "  Using provided Admin SSO App ID: $AD_APPLICATION_ID_ADMIN"
 fi
