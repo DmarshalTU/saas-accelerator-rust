@@ -1,36 +1,84 @@
-# Admin site: admin-api + static UI on one port (production-like)
+# syntax=docker/dockerfile:1.4
+# Admin site: admin-api (Rust) + static UI (React), served by nginx.
+# Build: docker build --build-arg VITE_ADMIN_API_URL=... --build-arg VITE_CUSTOMER_API_URL=... -f deployment/Dockerfile.admin-site .
 
-FROM rust:1.93.1-slim-trixie AS api-builder
+# ── Rust build ─────────────────────────────────────────────────────────────────
+FROM rust:1.83-slim-bookworm AS api-builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-COPY Cargo.toml ./
-COPY crates ./crates
-RUN cargo generate-lockfile
-WORKDIR /app/crates/admin-api
-RUN cargo build --release --bin admin-api
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends pkg-config libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy manifests first so dependency layer is cached when only source changes.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/admin-api/Cargo.toml   crates/admin-api/Cargo.toml
+COPY crates/customer-api/Cargo.toml crates/customer-api/Cargo.toml
+COPY crates/webhook-api/Cargo.toml  crates/webhook-api/Cargo.toml
+COPY crates/webhook/Cargo.toml      crates/webhook/Cargo.toml
+COPY crates/scheduler/Cargo.toml    crates/scheduler/Cargo.toml
+COPY crates/shared/Cargo.toml       crates/shared/Cargo.toml
+COPY crates/data/Cargo.toml         crates/data/Cargo.toml
+COPY crates/marketplace/Cargo.toml  crates/marketplace/Cargo.toml
+
+# Create stub binaries so cargo can resolve the full dep graph and cache it.
+RUN mkdir -p \
+    crates/admin-api/src crates/customer-api/src crates/webhook-api/src \
+    crates/webhook/src crates/scheduler/src crates/shared/src \
+    crates/data/src crates/marketplace/src && \
+    printf 'fn main() {}' > crates/admin-api/src/main.rs && \
+    printf 'fn main() {}' > crates/customer-api/src/main.rs && \
+    printf 'fn main() {}' > crates/webhook-api/src/main.rs && \
+    printf 'fn main() {}' > crates/scheduler/src/main.rs && \
+    printf 'pub fn lib() {}' > crates/webhook/src/lib.rs && \
+    printf 'pub fn lib() {}' > crates/shared/src/lib.rs && \
+    printf 'pub fn lib() {}' > crates/data/src/lib.rs && \
+    printf 'pub fn lib() {}' > crates/marketplace/src/lib.rs
+
+# Build and cache dependencies (BuildKit cache mount avoids re-downloading on each build).
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked --bin admin-api 2>/dev/null || true
+
+# Now copy real source and build.
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked --bin admin-api && \
+    cp /app/target/release/admin-api /usr/local/bin/admin-api
+
+# ── Frontend build ─────────────────────────────────────────────────────────────
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --prefer-offline
+
 COPY frontend/ .
-# Same-origin for admin API when served from this site
+
 ARG VITE_ADMIN_API_URL=
-ARG VITE_CUSTOMER_API_URL=http://localhost:3001
-ENV VITE_ADMIN_API_URL=$VITE_ADMIN_API_URL
-ENV VITE_CUSTOMER_API_URL=$VITE_CUSTOMER_API_URL
+ARG VITE_CUSTOMER_API_URL=
+ENV VITE_ADMIN_API_URL=$VITE_ADMIN_API_URL \
+    VITE_CUSTOMER_API_URL=$VITE_CUSTOMER_API_URL
 RUN npm run build
 
-FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y ca-certificates libssl3 nginx && rm -rf /var/lib/apt/lists/*
+# ── Runtime image ──────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates libssl3 nginx && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Remove default nginx config fragments that conflict with ours
+    rm -f /etc/nginx/sites-enabled/default
+
 WORKDIR /app
-COPY --from=api-builder /app/target/release/admin-api /app/admin-api
-COPY --from=frontend-builder /app/dist /usr/share/nginx/html
+COPY --from=api-builder  /usr/local/bin/admin-api      /app/admin-api
+COPY --from=frontend-builder /app/dist                 /usr/share/nginx/html
 COPY deployment/nginx-admin-site.conf /etc/nginx/sites-enabled/default
-RUN rm -f /etc/nginx/sites-enabled/default.bak 2>/dev/null; true
-COPY deployment/entrypoint-site.sh /app/entrypoint.sh
+COPY deployment/entrypoint-site.sh    /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && sed -i 's/\r$//' /app/entrypoint.sh
-ENV PORT=3000
+
 EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+    CMD curl -f http://localhost/health || exit 1
 ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"]
 CMD ["admin-api"]
