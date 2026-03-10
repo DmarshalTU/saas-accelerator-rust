@@ -263,11 +263,20 @@ info "PostgreSQL ready: $DB_HOST / $DB_NAME"
 
 # ── Key Vault ─────────────────────────────────────────────────────────────────
 section "Key Vault"
+# Purge any soft-deleted KV with the same name (happens on RG delete + recreate)
+az keyvault purge --name "$KEY_VAULT" --location "$LOCATION" -o none 2>/dev/null || true
+
 az keyvault create \
     --name "$KEY_VAULT" \
     --resource-group "$RESOURCE_GROUP" \
     --location "$LOCATION" \
     --enable-rbac-authorization false -o none 2>/dev/null || warn "Key Vault may already exist"
+
+# Temporarily open the firewall so we can set secrets (works on first run and re-runs)
+az keyvault update \
+    --name "$KEY_VAULT" \
+    --resource-group "$RESOURCE_GROUP" \
+    --default-action Allow -o none
 
 az keyvault secret set --vault-name "$KEY_VAULT" --name "DatabaseUrl"         --value "$DATABASE_URL" -o none
 az keyvault secret set --vault-name "$KEY_VAULT" --name "ADApplicationSecret" --value "$AD_APPLICATION_SECRET" -o none
@@ -275,7 +284,7 @@ az keyvault secret set --vault-name "$KEY_VAULT" --name "ADApplicationId"     --
 az keyvault secret set --vault-name "$KEY_VAULT" --name "ADAdminAppId"        --value "$AD_APPLICATION_ID_ADMIN" -o none
 az keyvault secret set --vault-name "$KEY_VAULT" --name "TenantId"            --value "$TENANT_ID" -o none
 
-# Restrict KV to VNet web subnet only
+# Lock down: allow only VNet web subnet + Azure services (for App Service KV references)
 az keyvault update \
     --name "$KEY_VAULT" \
     --resource-group "$RESOURCE_GROUP" \
