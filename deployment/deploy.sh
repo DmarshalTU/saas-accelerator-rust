@@ -211,6 +211,11 @@ az network vnet subnet create \
     --vnet-name "$VNET_NAME" -n db \
     --address-prefixes "10.0.2.0/24" \
     --delegations "Microsoft.DBforPostgreSQL/flexibleServers" -o none 2>/dev/null || true
+az network vnet subnet create \
+    --resource-group "$RESOURCE_GROUP" \
+    --vnet-name "$VNET_NAME" -n aci \
+    --address-prefixes "10.0.3.0/24" \
+    --delegations "Microsoft.ContainerInstance/containerGroups" -o none 2>/dev/null || true
 info "VNet ready: $VNET_NAME"
 
 # ── PostgreSQL Flexible Server ────────────────────────────────────────────────
@@ -274,6 +279,7 @@ az keyvault secret set --vault-name "$KEY_VAULT" --name "TenantId"            --
 az keyvault update \
     --name "$KEY_VAULT" \
     --resource-group "$RESOURCE_GROUP" \
+    --bypass AzureServices \
     --default-action Deny -o none
 az keyvault network-rule add \
     --name "$KEY_VAULT" \
@@ -337,10 +343,14 @@ if docker info >/dev/null 2>&1; then
         -f "$SCRIPT_DIR/Dockerfile.customer-site" \
         -t "$CUSTOMER_IMAGE" -t "${ACR_LOGIN_SERVER}/customer-site:latest" "$REPO_ROOT"
 
+    docker build -f "$SCRIPT_DIR/Dockerfile.migrate" \
+        -t "${ACR_LOGIN_SERVER}/migrate:latest" "$REPO_ROOT"
+
     docker push "$ADMIN_IMAGE"
     docker push "${ACR_LOGIN_SERVER}/admin-site:latest"
     docker push "$CUSTOMER_IMAGE"
     docker push "${ACR_LOGIN_SERVER}/customer-site:latest"
+    docker push "${ACR_LOGIN_SERVER}/migrate:latest"
 else
     info "No Docker daemon — using az acr build (remote build in ACR)..."
 
@@ -361,9 +371,60 @@ else
         --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
         --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
         "$REPO_ROOT"
+
+    az acr build \
+        --registry "$ACR_NAME" \
+        --image "migrate:latest" \
+        --file "$SCRIPT_DIR/Dockerfile.migrate" \
+        "$REPO_ROOT"
 fi
 
 info "Images ready (tag: $BUILD_TAG)"
+
+# ── Database Migrations ────────────────────────────────────────────────────────
+section "Database Migrations"
+MIGRATE_CONTAINER="${WEB_APP_NAME_PREFIX}-migrate"
+
+# Clean up any leftover from a previous run
+az container delete \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$MIGRATE_CONTAINER" \
+    --yes -o none 2>/dev/null || true
+
+info "Running migrations via Container Instance in VNet..."
+az container create \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$MIGRATE_CONTAINER" \
+    --image "${ACR_LOGIN_SERVER}/migrate:latest" \
+    --registry-login-server "$ACR_LOGIN_SERVER" \
+    --registry-username "$ACR_USER" \
+    --registry-password "$ACR_PASS" \
+    --restart-policy Never \
+    --vnet "$VNET_NAME" \
+    --subnet aci \
+    --secure-environment-variables "DATABASE_URL=${DATABASE_URL}" \
+    -o none
+
+info "Waiting for migrations to complete..."
+for i in $(seq 1 30); do
+    STATE=$(az container show \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$MIGRATE_CONTAINER" \
+        --query "containers[0].instanceView.currentState.state" -o tsv 2>/dev/null || echo "Unknown")
+    if [[ "$STATE" == "Terminated" ]]; then
+        EXIT_CODE=$(az container show \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$MIGRATE_CONTAINER" \
+            --query "containers[0].instanceView.currentState.exitCode" -o tsv)
+        az container logs --resource-group "$RESOURCE_GROUP" --name "$MIGRATE_CONTAINER" 2>/dev/null || true
+        az container delete --resource-group "$RESOURCE_GROUP" --name "$MIGRATE_CONTAINER" --yes -o none 2>/dev/null || true
+        [[ "$EXIT_CODE" == "0" ]] || die "Migration failed (exit code $EXIT_CODE)"
+        info "Migrations complete."
+        break
+    fi
+    info "  State: $STATE (attempt $i/30)..."
+    sleep 10
+done
 
 # ── Helper: whitelist Web App outbound IPs on Key Vault ───────────────────────
 _webapp_outbound_ips() {

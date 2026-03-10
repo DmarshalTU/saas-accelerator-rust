@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # SaaS Accelerator – Rust Edition  |  Upgrade Script
-# Updates running containers on existing Admin + Customer Web Apps.
-# Equivalent to the original Upgrade.ps1.
+# Rebuilds and redeploys containers to existing Admin + Customer Web Apps.
 #
 # Usage:
 #   ./upgrade.sh --prefix mycompany [--subscription <id>]
@@ -17,10 +16,9 @@ echo "=== SaaS Accelerator Upgrade  $(date) ===" > "$UPGRADE_LOG"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[INFO]${NC}  $*"; echo "[INFO]  $(date +%T) $*" >> "$UPGRADE_LOG"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; echo "[WARN]  $(date +%T) $*" >> "$UPGRADE_LOG"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*"; echo "[ERROR] $(date +%T) $*" >> "$UPGRADE_LOG"; }
 section() { echo -e "\n${CYAN}══ $* ══${NC}"; echo -e "\n═══ $* ═══" >> "$UPGRADE_LOG"; }
-die()     { error "$*"; exit 1; }
-on_error() { error "Upgrade failed at line $1 (exit $2)"; error "Log: $UPGRADE_LOG"; }
+die()     { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+on_error() { echo -e "${RED}[ERROR]${NC} Upgrade failed at line $1 (exit $2)"; }
 trap 'on_error $LINENO $?' ERR
 
 # ── load .env ─────────────────────────────────────────────────────────────────
@@ -32,15 +30,13 @@ WEB_APP_NAME_PREFIX="${WEB_APP_NAME_PREFIX:-}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-}"
 AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:-}"
 ACR_NAME="${ACR_NAME:-}"
-VITE_ADMIN_API_URL="${VITE_ADMIN_API_URL:-}"
-VITE_CUSTOMER_API_URL="${VITE_CUSTOMER_API_URL:-}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --prefix)       WEB_APP_NAME_PREFIX="$2"; shift 2 ;;
+        --prefix)         WEB_APP_NAME_PREFIX="$2"; shift 2 ;;
         --resource-group) RESOURCE_GROUP="$2"; shift 2 ;;
-        --subscription) AZURE_SUBSCRIPTION_ID="$2"; shift 2 ;;
-        --acr)          ACR_NAME="$2"; shift 2 ;;
+        --subscription)   AZURE_SUBSCRIPTION_ID="$2"; shift 2 ;;
+        --acr)            ACR_NAME="$2"; shift 2 ;;
         *) die "Unknown option: $1" ;;
     esac
 done
@@ -50,87 +46,94 @@ RESOURCE_GROUP="${RESOURCE_GROUP:-$WEB_APP_NAME_PREFIX}"
 ACR_NAME="${ACR_NAME:-${WEB_APP_NAME_PREFIX//-/}acr}"
 ADMIN_APP="${WEB_APP_NAME_PREFIX}-admin"
 CUSTOMER_APP="${WEB_APP_NAME_PREFIX}-portal"
-ADMIN_URL="${VITE_ADMIN_API_URL:-https://${ADMIN_APP}.azurewebsites.net}"
-CUSTOMER_URL="${VITE_CUSTOMER_API_URL:-https://${CUSTOMER_APP}.azurewebsites.net}"
+ADMIN_URL="https://${ADMIN_APP}.azurewebsites.net"
+CUSTOMER_URL="https://${CUSTOMER_APP}.azurewebsites.net"
 
 section "Upgrade configuration"
 echo "  Prefix:         $WEB_APP_NAME_PREFIX"
 echo "  Resource group: $RESOURCE_GROUP"
 echo "  ACR:            $ACR_NAME"
-echo "  Admin URL:      $ADMIN_URL"
-echo "  Customer URL:   $CUSTOMER_URL"
 
-for cmd in az docker; do
-    command -v "$cmd" &>/dev/null || die "'$cmd' not found."
-done
-
+command -v az &>/dev/null || die "'az' not found."
 [[ -n "$AZURE_SUBSCRIPTION_ID" ]] && az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 
-# ── ACR login ─────────────────────────────────────────────────────────────────
-section "ACR login"
+# ── Resolve ACR credentials ────────────────────────────────────────────────────
+section "ACR"
 ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
-info "Logging in to ACR via Azure AD token: $ACR_LOGIN_SERVER"
-az acr login --name "$ACR_NAME"
+ACR_USER=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
+ACR_PASS=$(az acr credential show --name "$ACR_NAME" --query passwords[0].value -o tsv)
+info "ACR: $ACR_LOGIN_SERVER"
 
 BUILD_TAG="$(date +%Y%m%d%H%M%S)"
 ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${BUILD_TAG}"
 CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:${BUILD_TAG}"
-ADMIN_LATEST="${ACR_LOGIN_SERVER}/admin-site:latest"
-CUSTOMER_LATEST="${ACR_LOGIN_SERVER}/customer-site:latest"
 
-# ── Build and push ────────────────────────────────────────────────────────────
+# ── Build and push ─────────────────────────────────────────────────────────────
 section "Building images (tag: $BUILD_TAG)"
-DOCKER_BUILDKIT=1 docker build \
-    --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-    --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-    -f "$SCRIPT_DIR/Dockerfile.admin-site" \
-    -t "$ADMIN_IMAGE" -t "$ADMIN_LATEST" "$REPO_ROOT"
-DOCKER_BUILDKIT=1 docker build \
-    --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-    --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-    -f "$SCRIPT_DIR/Dockerfile.customer-site" \
-    -t "$CUSTOMER_IMAGE" -t "$CUSTOMER_LATEST" "$REPO_ROOT"
 
-docker push "$ADMIN_IMAGE" && docker push "$ADMIN_LATEST"
-docker push "$CUSTOMER_IMAGE" && docker push "$CUSTOMER_LATEST"
-info "Images pushed: $BUILD_TAG"
+if docker info >/dev/null 2>&1; then
+    info "Docker daemon detected — building locally..."
+    az acr login --name "$ACR_NAME"
 
-# ── DB Migrations ──────────────────────────────────────────────────────────────
-section "Database migrations"
-if command -v sqlx &>/dev/null; then
-    DB_URL="${DATABASE_URL:-}"
-    if [[ -z "$DB_URL" ]]; then
-        warn "DATABASE_URL not set — fetching from Key Vault..."
-        KV="${KEY_VAULT:-${WEB_APP_NAME_PREFIX}-kv}"
-        DB_URL=$(az keyvault secret show --vault-name "$KV" --name "DatabaseUrl" --query value -o tsv 2>/dev/null || true)
-    fi
-    if [[ -n "$DB_URL" ]]; then
-        (cd "$REPO_ROOT/crates/data" && DATABASE_URL="$DB_URL" sqlx migrate run)
-        info "Migrations complete."
-    else
-        warn "Could not determine DATABASE_URL — run migrations manually"
-    fi
+    docker build \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        -f "$SCRIPT_DIR/Dockerfile.admin-site" \
+        -t "$ADMIN_IMAGE" -t "${ACR_LOGIN_SERVER}/admin-site:latest" "$REPO_ROOT"
+    docker build \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        -f "$SCRIPT_DIR/Dockerfile.customer-site" \
+        -t "$CUSTOMER_IMAGE" -t "${ACR_LOGIN_SERVER}/customer-site:latest" "$REPO_ROOT"
+
+    docker push "$ADMIN_IMAGE"
+    docker push "${ACR_LOGIN_SERVER}/admin-site:latest"
+    docker push "$CUSTOMER_IMAGE"
+    docker push "${ACR_LOGIN_SERVER}/customer-site:latest"
 else
-    warn "sqlx CLI not found — run migrations manually: cd crates/data && sqlx migrate run"
+    info "No Docker daemon — using az acr build..."
+
+    az acr build \
+        --registry "$ACR_NAME" \
+        --image "admin-site:${BUILD_TAG}" \
+        --image "admin-site:latest" \
+        --file "$SCRIPT_DIR/Dockerfile.admin-site" \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        "$REPO_ROOT"
+
+    az acr build \
+        --registry "$ACR_NAME" \
+        --image "customer-site:${BUILD_TAG}" \
+        --image "customer-site:latest" \
+        --file "$SCRIPT_DIR/Dockerfile.customer-site" \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        "$REPO_ROOT"
 fi
+
+info "Images pushed: $BUILD_TAG"
 
 # ── Update Web Apps ────────────────────────────────────────────────────────────
 section "Deploying to Web Apps"
-az webapp config container set \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --docker-custom-image-name "$ADMIN_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
-az webapp restart --name "$ADMIN_APP" --resource-group "$RESOURCE_GROUP" -o none
-info "Admin Web App updated and restarted: $ADMIN_URL"
 
-az webapp config container set \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --docker-custom-image-name "$CUSTOMER_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
-az webapp restart --name "$CUSTOMER_APP" --resource-group "$RESOURCE_GROUP" -o none
-info "Customer Web App updated and restarted: $CUSTOMER_URL"
+for app in "$ADMIN_APP" "$CUSTOMER_APP"; do
+    image="${ACR_LOGIN_SERVER}/$([ "$app" = "$ADMIN_APP" ] && echo "admin-site" || echo "customer-site"):${BUILD_TAG}"
+    info "  Updating $app → $image"
+    az webapp config appsettings set \
+        --name "$app" \
+        --resource-group "$RESOURCE_GROUP" \
+        --settings \
+            "DOCKER_REGISTRY_SERVER_URL=https://${ACR_LOGIN_SERVER}" \
+            "DOCKER_REGISTRY_SERVER_USERNAME=${ACR_USER}" \
+            "DOCKER_REGISTRY_SERVER_PASSWORD=${ACR_PASS}" -o none
+    az webapp config set \
+        --name "$app" \
+        --resource-group "$RESOURCE_GROUP" \
+        --linux-fx-version "DOCKER|${image}" -o none
+    az webapp restart --name "$app" --resource-group "$RESOURCE_GROUP" -o none
+    info "  $app restarted."
+done
 
 section "Upgrade complete"
 echo ""
