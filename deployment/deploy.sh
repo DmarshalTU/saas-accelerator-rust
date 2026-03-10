@@ -55,6 +55,7 @@ DB_SERVER_NAME="${DB_SERVER_NAME:-}"
 DB_NAME="${DB_NAME:-}"
 KEY_VAULT="${KEY_VAULT:-}"
 ACR_NAME="${ACR_NAME:-}"
+ACR_SUBSCRIPTION="${ACR_SUBSCRIPTION:-}"   # Set if ACR is in a different subscription
 LOGO_URL_PNG="${LOGO_URL_PNG:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -72,6 +73,7 @@ while [[ $# -gt 0 ]]; do
         --db-name)              DB_NAME="$2"; shift 2 ;;
         --key-vault)            KEY_VAULT="$2"; shift 2 ;;
         --acr)                  ACR_NAME="$2"; shift 2 ;;
+        --acr-subscription)     ACR_SUBSCRIPTION="$2"; shift 2 ;;
         *) die "Unknown option: $1" ;;
     esac
 done
@@ -279,17 +281,32 @@ info "Key Vault ready: $KEY_VAULT"
 
 # ── Azure Container Registry ───────────────────────────────────────────────────
 section "Azure Container Registry"
-az acr create \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$ACR_NAME" \
-    --sku Basic \
-    --location "$LOCATION" \
-    --admin-enabled true -o none 2>/dev/null || warn "ACR may already exist"
 
-ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
-ACR_USERNAME=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
-ACR_PASSWORD=$(az acr credential show --name "$ACR_NAME" --query "passwords[0].value" -o tsv)
-info "ACR ready: $ACR_LOGIN_SERVER"
+# Helper: run an az command optionally scoped to a different subscription.
+acr_az() { 
+    if [[ -n "$ACR_SUBSCRIPTION" ]]; then
+        az --subscription "$ACR_SUBSCRIPTION" "$@"
+    else
+        az "$@"
+    fi
+}
+
+ACR_EXISTS=$(acr_az acr show --name "$ACR_NAME" --query name -o tsv 2>/dev/null || true)
+if [[ -z "$ACR_EXISTS" ]]; then
+    info "Creating ACR: $ACR_NAME (Basic, admin disabled)"
+    acr_az acr create \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$ACR_NAME" \
+        --sku Basic \
+        --location "$LOCATION" \
+        --admin-enabled false -o none
+else
+    info "Using existing ACR: $ACR_NAME (subscription: ${ACR_SUBSCRIPTION:-current})"
+fi
+
+ACR_LOGIN_SERVER=$(acr_az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+ACR_ID=$(acr_az acr show --name "$ACR_NAME" --query id -o tsv)
+info "ACR: $ACR_LOGIN_SERVER  (id: $ACR_ID)"
 
 # ── App Service Plan ───────────────────────────────────────────────────────────
 section "App Service Plan"
@@ -303,30 +320,56 @@ info "App Service Plan ready: $APP_PLAN (B1 Linux)"
 
 # ── Build and push Docker images ───────────────────────────────────────────────
 section "Docker build and push"
-DOCKER_BUILDKIT=1 docker login "$ACR_LOGIN_SERVER" \
-    --username "$ACR_USERNAME" --password "$ACR_PASSWORD"
+# az acr login uses your Azure AD token — works with network-restricted ACRs
+# (your machine must be on an allowed network or have a service endpoint).
+info "Logging in to ACR via Azure AD token..."
+az acr login --name "$ACR_NAME"
 
-ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:latest"
-CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:latest"
+BUILD_TAG="$(date +%Y%m%d%H%M%S)"
+ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${BUILD_TAG}"
+CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:${BUILD_TAG}"
+ADMIN_LATEST="${ACR_LOGIN_SERVER}/admin-site:latest"
+CUSTOMER_LATEST="${ACR_LOGIN_SERVER}/customer-site:latest"
 
-info "Building admin-site image..."
+info "Building admin-site image (tag: $BUILD_TAG)..."
 DOCKER_BUILDKIT=1 docker build \
     --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
     --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
     -f "$SCRIPT_DIR/Dockerfile.admin-site" \
-    -t "$ADMIN_IMAGE" "$REPO_ROOT"
+    -t "$ADMIN_IMAGE" -t "$ADMIN_LATEST" "$REPO_ROOT"
 
-info "Building customer-site image..."
+info "Building customer-site image (tag: $BUILD_TAG)..."
 DOCKER_BUILDKIT=1 docker build \
     --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
     --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
     -f "$SCRIPT_DIR/Dockerfile.customer-site" \
-    -t "$CUSTOMER_IMAGE" "$REPO_ROOT"
+    -t "$CUSTOMER_IMAGE" -t "$CUSTOMER_LATEST" "$REPO_ROOT"
 
 info "Pushing images to ACR..."
-docker push "$ADMIN_IMAGE"
-docker push "$CUSTOMER_IMAGE"
-info "Images pushed: $ADMIN_IMAGE, $CUSTOMER_IMAGE"
+docker push "$ADMIN_IMAGE" && docker push "$ADMIN_LATEST"
+docker push "$CUSTOMER_IMAGE" && docker push "$CUSTOMER_LATEST"
+info "Images pushed (tag: $BUILD_TAG)"
+
+# ── ACR network: whitelist Web App outbound IPs ───────────────────────────────
+# Adds a Web App's outbound IPs to the ACR's network allowlist.
+# Required when the ACR is network-restricted (selected networks) — the Web App
+# must be able to reach the ACR endpoint to pull images at startup.
+acr_whitelist_webapp_ips() {
+    local app_name="$1"
+    local rg="$2"
+    info "  Fetching outbound IPs for $app_name..."
+    local ips
+    ips=$(az webapp show --name "$app_name" --resource-group "$rg" \
+        --query "[possibleOutboundIpAddresses]" -o tsv | tr ',' '\n' | sort -u)
+    local count=0
+    while IFS= read -r ip; do
+        [[ -z "$ip" ]] && continue
+        acr_az acr network-rule add \
+            --name "$ACR_NAME" \
+            --ip-address "${ip}/32" -o none 2>/dev/null && count=$((count+1))
+    done <<< "$ips"
+    info "  Added $count IP rules for $app_name to ACR $ACR_NAME"
+}
 
 # ── Key Vault secret references ────────────────────────────────────────────────
 KV_REF_DB="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=DatabaseUrl) "
@@ -344,26 +387,41 @@ az webapp create \
     --deployment-container-image-name "$ADMIN_IMAGE" -o none 2>/dev/null || \
     warn "Admin Web App may already exist"
 
-# Configure ACR credentials
-az webapp config container set \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --docker-custom-image-name "$ADMIN_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" \
-    --docker-registry-server-user "$ACR_USERNAME" \
-    --docker-registry-server-password "$ACR_PASSWORD" -o none
-
-# Assign system identity + Key Vault access
+# Assign system identity first (needed for both KV access and ACR pull)
 ADMIN_IDENTITY=$(az webapp identity assign \
     --name "$ADMIN_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --identities "[system]" \
     --query principalId -o tsv)
+
+# Grant AcrPull on ACR — cross-subscription works because we use the full resource ID scope
+acr_az role assignment create \
+    --assignee "$ADMIN_IDENTITY" \
+    --role AcrPull \
+    --scope "$ACR_ID" -o none
+
+# Grant Key Vault read access
 az keyvault set-policy \
     --name "$KEY_VAULT" \
     --resource-group "$RESOURCE_GROUP" \
     --object-id "$ADMIN_IDENTITY" \
     --secret-permissions get list -o none
+
+# Configure container — no username/password, identity does the pull
+az webapp config container set \
+    --name "$ADMIN_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --docker-custom-image-name "$ADMIN_IMAGE" \
+    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
+
+# Enable Managed Identity ACR pull
+az webapp config set \
+    --name "$ADMIN_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --generic-configurations '{"acrUseManagedIdentityCreds": true}' -o none 2>/dev/null || \
+az resource update \
+    --ids "$(az webapp show --name "$ADMIN_APP" --resource-group "$RESOURCE_GROUP" --query id -o tsv)/config/web" \
+    --set properties.acrUseManagedIdentityCreds=true -o none
 
 # App settings (using Key Vault references for secrets)
 az webapp config appsettings set \
@@ -404,6 +462,9 @@ az webapp vnet-integration add \
     --vnet "$VNET_NAME" \
     --subnet web -o none
 
+# Whitelist Admin Web App outbound IPs on the ACR network rules
+acr_whitelist_webapp_ips "$ADMIN_APP" "$RESOURCE_GROUP"
+
 info "Admin Web App ready: $ADMIN_URL"
 
 # ── Customer Web App ───────────────────────────────────────────────────────────
@@ -415,24 +476,36 @@ az webapp create \
     --deployment-container-image-name "$CUSTOMER_IMAGE" -o none 2>/dev/null || \
     warn "Customer Web App may already exist"
 
-az webapp config container set \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --docker-custom-image-name "$CUSTOMER_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" \
-    --docker-registry-server-user "$ACR_USERNAME" \
-    --docker-registry-server-password "$ACR_PASSWORD" -o none
-
 CUSTOMER_IDENTITY=$(az webapp identity assign \
     --name "$CUSTOMER_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --identities "[system]" \
     --query principalId -o tsv)
+
+acr_az role assignment create \
+    --assignee "$CUSTOMER_IDENTITY" \
+    --role AcrPull \
+    --scope "$ACR_ID" -o none
+
 az keyvault set-policy \
     --name "$KEY_VAULT" \
     --resource-group "$RESOURCE_GROUP" \
     --object-id "$CUSTOMER_IDENTITY" \
     --secret-permissions get list -o none
+
+az webapp config container set \
+    --name "$CUSTOMER_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --docker-custom-image-name "$CUSTOMER_IMAGE" \
+    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
+
+az webapp config set \
+    --name "$CUSTOMER_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --generic-configurations '{"acrUseManagedIdentityCreds": true}' -o none 2>/dev/null || \
+az resource update \
+    --ids "$(az webapp show --name "$CUSTOMER_APP" --resource-group "$RESOURCE_GROUP" --query id -o tsv)/config/web" \
+    --set properties.acrUseManagedIdentityCreds=true -o none
 
 az webapp config appsettings set \
     --name "$CUSTOMER_APP" \
@@ -463,6 +536,9 @@ az webapp vnet-integration add \
     --resource-group "$RESOURCE_GROUP" \
     --vnet "$VNET_NAME" \
     --subnet web -o none
+
+# Whitelist Customer Web App outbound IPs on the ACR network rules
+acr_whitelist_webapp_ips "$CUSTOMER_APP" "$RESOURCE_GROUP"
 
 info "Customer Web App ready: $CUSTOMER_URL"
 

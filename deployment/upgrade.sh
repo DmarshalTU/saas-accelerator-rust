@@ -66,14 +66,11 @@ done
 
 [[ -n "$AZURE_SUBSCRIPTION_ID" ]] && az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 
-# ── ACR credentials ───────────────────────────────────────────────────────────
+# ── ACR login ─────────────────────────────────────────────────────────────────
 section "ACR login"
 ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
-ACR_USERNAME=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
-ACR_PASSWORD=$(az acr credential show --name "$ACR_NAME" --query "passwords[0].value" -o tsv)
-
-DOCKER_BUILDKIT=1 docker login "$ACR_LOGIN_SERVER" \
-    --username "$ACR_USERNAME" --password "$ACR_PASSWORD"
+info "Logging in to ACR via Azure AD token: $ACR_LOGIN_SERVER"
+az acr login --name "$ACR_NAME"
 
 BUILD_TAG="$(date +%Y%m%d%H%M%S)"
 ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${BUILD_TAG}"
@@ -123,9 +120,7 @@ az webapp config container set \
     --name "$ADMIN_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --docker-custom-image-name "$ADMIN_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" \
-    --docker-registry-server-user "$ACR_USERNAME" \
-    --docker-registry-server-password "$ACR_PASSWORD" -o none
+    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
 az webapp restart --name "$ADMIN_APP" --resource-group "$RESOURCE_GROUP" -o none
 info "Admin Web App updated and restarted: $ADMIN_URL"
 
@@ -133,9 +128,7 @@ az webapp config container set \
     --name "$CUSTOMER_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --docker-custom-image-name "$CUSTOMER_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" \
-    --docker-registry-server-user "$ACR_USERNAME" \
-    --docker-registry-server-password "$ACR_PASSWORD" -o none
+    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
 az webapp restart --name "$CUSTOMER_APP" --resource-group "$RESOURCE_GROUP" -o none
 info "Customer Web App updated and restarted: $CUSTOMER_URL"
 
