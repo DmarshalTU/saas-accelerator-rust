@@ -2,7 +2,7 @@
 # Build: docker build --build-arg VITE_ADMIN_API_URL=... --build-arg VITE_CUSTOMER_API_URL=... -f deployment/Dockerfile.admin-site .
 
 # ── Rust build ─────────────────────────────────────────────────────────────────
-FROM rust:1.93.1-slim-trixie AS api-builder
+FROM acrcorengau10tix.azurecr.io/rust:1.93.1-slim-trixie AS api-builder
 WORKDIR /app
 
 RUN apt-get update && \
@@ -43,7 +43,7 @@ RUN cargo build --release --locked --bin admin-api && \
     cp /app/target/release/admin-api /usr/local/bin/admin-api
 
 # ── Frontend build ─────────────────────────────────────────────────────────────
-FROM node:20-alpine AS frontend-builder
+FROM acrcorengau10tix.azurecr.io/node:20-alpine AS frontend-builder
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json ./
@@ -58,7 +58,7 @@ ENV VITE_ADMIN_API_URL=$VITE_ADMIN_API_URL \
 RUN npm run build
 
 # ── Runtime image ──────────────────────────────────────────────────────────────
-FROM debian:trixie-slim
+FROM acrcorengau10tix.azurecr.io/debian:trixie-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates libssl3 nginx && \
     rm -rf /var/lib/apt/lists/* && \
