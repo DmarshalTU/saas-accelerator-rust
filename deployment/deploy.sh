@@ -46,6 +46,7 @@ DB_SERVER_NAME="${DB_SERVER_NAME:-}"
 DB_NAME="${DB_NAME:-}"
 KEY_VAULT="${KEY_VAULT:-}"
 ACR_NAME="${ACR_NAME:-}"
+SKIP_BUILD="${SKIP_BUILD:-false}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --db-name)               DB_NAME="$2"; shift 2 ;;
         --key-vault)             KEY_VAULT="$2"; shift 2 ;;
         --acr)                   ACR_NAME="$2"; shift 2 ;;
+        --skip-build)            SKIP_BUILD=true; shift ;;
         *) die "Unknown option: $1" ;;
     esac
 done
@@ -349,63 +351,80 @@ info "App Service Plan ready: $APP_PLAN (B1 Linux)"
 # ── Build and push Docker images ───────────────────────────────────────────────
 section "Docker build and push"
 
-BUILD_TAG="$(date +%Y%m%d%H%M%S)"
-ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${BUILD_TAG}"
-CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:${BUILD_TAG}"
+# Resolve the current "latest" tag from ACR (used when --skip-build)
+_acr_latest_tag() {
+    az acr repository show-tags --name "$ACR_NAME" --repository "$1" \
+        --orderby time_desc --top 1 --output tsv 2>/dev/null || echo "latest"
+}
 
-if docker info >/dev/null 2>&1; then
-    info "Docker daemon detected — building locally..."
-    az acr login --name "$ACR_NAME"
-
-    docker build \
-        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-        -f "$SCRIPT_DIR/Dockerfile.admin-site" \
-        -t "$ADMIN_IMAGE" -t "${ACR_LOGIN_SERVER}/admin-site:latest" "$REPO_ROOT"
-
-    docker build \
-        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-        -f "$SCRIPT_DIR/Dockerfile.customer-site" \
-        -t "$CUSTOMER_IMAGE" -t "${ACR_LOGIN_SERVER}/customer-site:latest" "$REPO_ROOT"
-
-    docker build -f "$SCRIPT_DIR/Dockerfile.migrate" \
-        -t "${ACR_LOGIN_SERVER}/migrate:latest" "$REPO_ROOT"
-
-    docker push "$ADMIN_IMAGE"
-    docker push "${ACR_LOGIN_SERVER}/admin-site:latest"
-    docker push "$CUSTOMER_IMAGE"
-    docker push "${ACR_LOGIN_SERVER}/customer-site:latest"
-    docker push "${ACR_LOGIN_SERVER}/migrate:latest"
+if [[ "$SKIP_BUILD" == "true" ]]; then
+    info "--skip-build: reusing existing images from ACR"
+    ADMIN_TAG=$(_acr_latest_tag admin-site)
+    CUSTOMER_TAG=$(_acr_latest_tag customer-site)
+    BUILD_TAG="$ADMIN_TAG"
+    ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${ADMIN_TAG}"
+    CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:${CUSTOMER_TAG}"
+    info "  admin-site:    $ADMIN_IMAGE"
+    info "  customer-site: $CUSTOMER_IMAGE"
 else
-    info "No Docker daemon — using az acr build (remote build in ACR)..."
+    BUILD_TAG="$(date +%Y%m%d%H%M%S)"
+    ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${BUILD_TAG}"
+    CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:${BUILD_TAG}"
 
-    az acr build \
-        --registry "$ACR_NAME" \
-        --image "admin-site:${BUILD_TAG}" \
-        --image "admin-site:latest" \
-        --file "$SCRIPT_DIR/Dockerfile.admin-site" \
-        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-        "$REPO_ROOT"
+    if docker info >/dev/null 2>&1; then
+        info "Docker daemon detected — building locally..."
+        az acr login --name "$ACR_NAME"
 
-    az acr build \
-        --registry "$ACR_NAME" \
-        --image "customer-site:${BUILD_TAG}" \
-        --image "customer-site:latest" \
-        --file "$SCRIPT_DIR/Dockerfile.customer-site" \
-        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-        "$REPO_ROOT"
+        docker build \
+            --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+            --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+            -f "$SCRIPT_DIR/Dockerfile.admin-site" \
+            -t "$ADMIN_IMAGE" -t "${ACR_LOGIN_SERVER}/admin-site:latest" "$REPO_ROOT"
 
-    az acr build \
-        --registry "$ACR_NAME" \
-        --image "migrate:latest" \
-        --file "$SCRIPT_DIR/Dockerfile.migrate" \
-        "$REPO_ROOT"
+        docker build \
+            --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+            --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+            -f "$SCRIPT_DIR/Dockerfile.customer-site" \
+            -t "$CUSTOMER_IMAGE" -t "${ACR_LOGIN_SERVER}/customer-site:latest" "$REPO_ROOT"
+
+        docker build -f "$SCRIPT_DIR/Dockerfile.migrate" \
+            -t "${ACR_LOGIN_SERVER}/migrate:latest" "$REPO_ROOT"
+
+        docker push "$ADMIN_IMAGE"
+        docker push "${ACR_LOGIN_SERVER}/admin-site:latest"
+        docker push "$CUSTOMER_IMAGE"
+        docker push "${ACR_LOGIN_SERVER}/customer-site:latest"
+        docker push "${ACR_LOGIN_SERVER}/migrate:latest"
+    else
+        info "No Docker daemon — using az acr build (remote build in ACR)..."
+
+        az acr build \
+            --registry "$ACR_NAME" \
+            --image "admin-site:${BUILD_TAG}" \
+            --image "admin-site:latest" \
+            --file "$SCRIPT_DIR/Dockerfile.admin-site" \
+            --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+            --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+            "$REPO_ROOT"
+
+        az acr build \
+            --registry "$ACR_NAME" \
+            --image "customer-site:${BUILD_TAG}" \
+            --image "customer-site:latest" \
+            --file "$SCRIPT_DIR/Dockerfile.customer-site" \
+            --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+            --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+            "$REPO_ROOT"
+
+        az acr build \
+            --registry "$ACR_NAME" \
+            --image "migrate:latest" \
+            --file "$SCRIPT_DIR/Dockerfile.migrate" \
+            "$REPO_ROOT"
+    fi
+
+    info "Images ready (tag: $BUILD_TAG)"
 fi
-
-info "Images ready (tag: $BUILD_TAG)"
 
 # ── Database Migrations ────────────────────────────────────────────────────────
 section "Database Migrations"
@@ -455,38 +474,11 @@ for i in $(seq 1 30); do
     sleep 10
 done
 
-# ── Helper: whitelist Web App outbound IPs on Key Vault ───────────────────────
-_webapp_outbound_ips() {
-    az webapp show --name "$1" --resource-group "$2" \
-        --query "possibleOutboundIpAddresses" -o tsv | tr ',' '\n' | sort -u
-}
-
-kv_whitelist_webapp_ips() {
-    local app_name="$1" rg="$2"
-    info "  Whitelisting $app_name outbound IPs on Key Vault $KEY_VAULT..."
-    local count=0
-    while IFS= read -r ip; do
-        [[ -z "$ip" ]] && continue
-        az keyvault network-rule add \
-            --name "$KEY_VAULT" \
-            --resource-group "$RESOURCE_GROUP" \
-            --ip-address "${ip}/32" -o none 2>/dev/null && count=$((count+1))
-    done <<< "$(_webapp_outbound_ips "$app_name" "$rg")"
-    info "  Added $count IP rules for $app_name to Key Vault"
-}
-
-# ── Key Vault secret references ────────────────────────────────────────────────
-KV_REF_DB="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=DatabaseUrl)"
-KV_REF_SECRET="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADApplicationSecret)"
-KV_REF_APPID="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADApplicationId)"
-KV_REF_TENANT="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=TenantId)"
-KV_REF_ADMIN_APPID="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADAdminAppId)"
-
 # ── Helper: configure a web app ────────────────────────────────────────────────
 configure_webapp() {
     local app_name="$1" image="$2" port="$3"
     shift 3
-    # $@ = extra appsettings
+    # $@ = extra appsettings (direct values, no KV references)
 
     info "  Creating/updating $app_name..."
     az webapp create \
@@ -495,28 +487,7 @@ configure_webapp() {
         --name "$app_name" \
         --deployment-container-image-name "$image" -o none 2>/dev/null || true
 
-    # System-assigned managed identity for Key Vault access
-    local identity
-    identity=$(az webapp identity assign \
-        --name "$app_name" \
-        --resource-group "$RESOURCE_GROUP" \
-        --query principalId -o tsv)
-
-    # Wait for identity to propagate, then grant KV access
-    info "  Waiting for identity propagation (up to 120s)..."
-    for i in $(seq 1 12); do
-        if az keyvault set-policy \
-            --name "$KEY_VAULT" \
-            --resource-group "$RESOURCE_GROUP" \
-            --object-id "$identity" \
-            --secret-permissions get list -o none 2>/dev/null; then
-            break
-        fi
-        info "  Not propagated yet, retrying in 10s (attempt $i/12)..."
-        sleep 10
-    done
-
-    # Registry credentials via well-known app settings (most reliable method)
+    # Registry credentials + core settings (all direct values — no KV references)
     az webapp config appsettings set \
         --name "$app_name" \
         --resource-group "$RESOURCE_GROUP" \
@@ -554,21 +525,18 @@ configure_webapp() {
         --resource-group "$RESOURCE_GROUP" \
         --vnet "$VNET_NAME" \
         --subnet web -o none 2>/dev/null || true
-
-    # Whitelist outbound IPs on Key Vault
-    kv_whitelist_webapp_ips "$app_name" "$RESOURCE_GROUP"
 }
 
 # ── Admin Web App ──────────────────────────────────────────────────────────────
 section "Admin Web App"
 configure_webapp "$ADMIN_APP" "$ADMIN_IMAGE" "3000" \
-    "DATABASE_URL=${KV_REF_DB}" \
-    "SaaS_API_CLIENT_ID=${KV_REF_APPID}" \
-    "SaaS_API_CLIENT_SECRET=${KV_REF_SECRET}" \
-    "SaaS_API_TENANT_ID=${KV_REF_TENANT}" \
-    "AZURE_AD_TENANT_ID=${KV_REF_TENANT}" \
-    "AZURE_AD_CLIENT_ID=${KV_REF_ADMIN_APPID}" \
-    "AZURE_AD_CLIENT_SECRET=${KV_REF_SECRET}" \
+    "DATABASE_URL=${DATABASE_URL}" \
+    "SaaS_API_CLIENT_ID=${AD_APPLICATION_ID}" \
+    "SaaS_API_CLIENT_SECRET=${AD_APPLICATION_SECRET}" \
+    "SaaS_API_TENANT_ID=${TENANT_ID}" \
+    "AZURE_AD_TENANT_ID=${TENANT_ID}" \
+    "AZURE_AD_CLIENT_ID=${AD_APPLICATION_ID_ADMIN}" \
+    "AZURE_AD_CLIENT_SECRET=${AD_APPLICATION_SECRET}" \
     "AZURE_AD_REDIRECT_URI=${ADMIN_URL}/auth/callback" \
     "AZURE_AD_SIGNED_OUT_REDIRECT_URI=${ADMIN_URL}/admin" \
     "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
@@ -579,10 +547,10 @@ info "Admin Web App ready: $ADMIN_URL"
 # ── Customer Web App ───────────────────────────────────────────────────────────
 section "Customer Web App"
 configure_webapp "$CUSTOMER_APP" "$CUSTOMER_IMAGE" "3001" \
-    "DATABASE_URL=${KV_REF_DB}" \
-    "SaaS_API_CLIENT_ID=${KV_REF_APPID}" \
-    "SaaS_API_CLIENT_SECRET=${KV_REF_SECRET}" \
-    "SaaS_API_TENANT_ID=${KV_REF_TENANT}" \
+    "DATABASE_URL=${DATABASE_URL}" \
+    "SaaS_API_CLIENT_ID=${AD_APPLICATION_ID}" \
+    "SaaS_API_CLIENT_SECRET=${AD_APPLICATION_SECRET}" \
+    "SaaS_API_TENANT_ID=${TENANT_ID}" \
     "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
     "MARKETPLACE_API_VERSION=2018-08-31"
 info "Customer Web App ready: $CUSTOMER_URL"
