@@ -326,6 +326,32 @@ ACR_LOGIN_SERVER=$(acr_az acr show --name "$ACR_NAME" --query loginServer -o tsv
 ACR_ID=$(acr_az acr show --name "$ACR_NAME" --query id -o tsv)
 info "ACR: $ACR_LOGIN_SERVER  (id: $ACR_ID)"
 
+# Create (or reuse) a service principal for ACR pull — avoids MSI sidecar issues
+# with VNet-integrated Web Apps and cross-subscription ACRs.
+SP_NAME="${WEB_APP_NAME_PREFIX}-acr-pull"
+EXISTING_SP=$(az ad sp list --display-name "$SP_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)
+if [[ -n "$EXISTING_SP" ]]; then
+    info "Reusing existing ACR pull SP: $EXISTING_SP"
+    ACR_SP_ID="$EXISTING_SP"
+    # Ensure the SP object exists (may have been deleted while app registration persists)
+    az ad sp create --id "$ACR_SP_ID" --only-show-errors >/dev/null 2>&1 || true
+    sleep 5
+    ACR_SP_SECRET=$(az ad app credential reset \
+        --id "$ACR_SP_ID" --append \
+        --display-name "deploy-$(date +%Y%m%d)" \
+        --years 2 --query password -o tsv --only-show-errors)
+else
+    info "Creating ACR pull service principal: $SP_NAME"
+    SP_JSON=$(az ad sp create-for-rbac \
+        --name "$SP_NAME" \
+        --role AcrPull \
+        --scopes "$ACR_ID" \
+        --years 2 --only-show-errors)
+    ACR_SP_ID=$(echo "$SP_JSON" | jq -r '.appId')
+    ACR_SP_SECRET=$(echo "$SP_JSON" | jq -r '.password')
+fi
+info "ACR pull SP ready: $ACR_SP_ID"
+
 # ── App Service Plan ───────────────────────────────────────────────────────────
 section "App Service Plan"
 az appservice plan create \
@@ -393,25 +419,42 @@ fi
 
 info "Images ready (tag: $BUILD_TAG)"
 
-# ── ACR network: whitelist Web App outbound IPs ───────────────────────────────
-# Adds a Web App's outbound IPs to the ACR's network allowlist.
-# Required when the ACR is network-restricted (selected networks) — the Web App
-# must be able to reach the ACR endpoint to pull images at startup.
+# ── Network helpers: whitelist Web App outbound IPs on ACR and Key Vault ──────
+# Required so the Web App can pull images from a network-restricted ACR,
+# and so the App Service platform can resolve Key Vault secret references.
+_webapp_outbound_ips() {
+    az webapp show --name "$1" --resource-group "$2" \
+        --query "possibleOutboundIpAddresses" -o tsv | tr ',' '\n' | sort -u
+}
+
 acr_whitelist_webapp_ips() {
-    local app_name="$1"
-    local rg="$2"
-    info "  Fetching outbound IPs for $app_name..."
-    local ips
-    ips=$(az webapp show --name "$app_name" --resource-group "$rg" \
-        --query "[possibleOutboundIpAddresses]" -o tsv | tr ',' '\n' | sort -u)
+    local app_name="$1" rg="$2"
+    info "  Whitelisting $app_name outbound IPs on ACR $ACR_NAME..."
     local count=0
     while IFS= read -r ip; do
         [[ -z "$ip" ]] && continue
         acr_az acr network-rule add \
             --name "$ACR_NAME" \
             --ip-address "${ip}/32" -o none 2>/dev/null && count=$((count+1))
-    done <<< "$ips"
-    info "  Added $count IP rules for $app_name to ACR $ACR_NAME"
+    done <<< "$(_webapp_outbound_ips "$app_name" "$rg")"
+    info "  Added $count IP rules for $app_name to ACR"
+}
+
+kv_whitelist_webapp_ips() {
+    local app_name="$1" rg="$2"
+    info "  Whitelisting $app_name outbound IPs on Key Vault $KEY_VAULT..."
+    # KV firewall is set to Deny by default — temporarily open for rule addition,
+    # then re-lock. Control-plane operations (network-rule add) are not blocked
+    # by the data-plane firewall, so this works even when KV is locked.
+    local count=0
+    while IFS= read -r ip; do
+        [[ -z "$ip" ]] && continue
+        az keyvault network-rule add \
+            --name "$KEY_VAULT" \
+            --resource-group "$RESOURCE_GROUP" \
+            --ip-address "${ip}/32" -o none 2>/dev/null && count=$((count+1))
+    done <<< "$(_webapp_outbound_ips "$app_name" "$rg")"
+    info "  Added $count IP rules for $app_name to Key Vault"
 }
 
 # ── Key Vault secret references ────────────────────────────────────────────────
@@ -430,41 +473,40 @@ az webapp create \
     --deployment-container-image-name "$ADMIN_IMAGE" -o none 2>/dev/null || \
     warn "Admin Web App may already exist"
 
-# Assign system identity first (needed for both KV access and ACR pull)
+# Assign system identity (needed for Key Vault access only)
 ADMIN_IDENTITY=$(az webapp identity assign \
     --name "$ADMIN_APP" \
     --resource-group "$RESOURCE_GROUP" \
     --identities "[system]" \
     --query principalId -o tsv)
 
-# Grant AcrPull on ACR — cross-subscription works because we use the full resource ID scope
-acr_az role assignment create \
-    --assignee "$ADMIN_IDENTITY" \
-    --role AcrPull \
-    --scope "$ACR_ID" -o none
+# Grant Key Vault read access — retry until identity propagates to AAD graph
+info "  Waiting for identity propagation (up to 120s)..."
+for i in $(seq 1 12); do
+    if az keyvault set-policy \
+        --name "$KEY_VAULT" \
+        --resource-group "$RESOURCE_GROUP" \
+        --object-id "$ADMIN_IDENTITY" \
+        --secret-permissions get list -o none 2>/dev/null; then
+        break
+    fi
+    info "  Not propagated yet, retrying in 10s (attempt $i/12)..."
+    sleep 10
+done
 
-# Grant Key Vault read access
-az keyvault set-policy \
-    --name "$KEY_VAULT" \
-    --resource-group "$RESOURCE_GROUP" \
-    --object-id "$ADMIN_IDENTITY" \
-    --secret-permissions get list -o none
-
-# Configure container — no username/password, identity does the pull
+# Configure container with SP credentials — avoids MSI sidecar + VNet issues
 az webapp config container set \
     --name "$ADMIN_APP" \
     --resource-group "$RESOURCE_GROUP" \
-    --docker-custom-image-name "$ADMIN_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
+    --container-image-name "$ADMIN_IMAGE" \
+    --container-registry-url "https://${ACR_LOGIN_SERVER}" \
+    --container-registry-user "$ACR_SP_ID" \
+    --container-registry-password "$ACR_SP_SECRET" -o none
 
-# Enable Managed Identity ACR pull
-az webapp config set \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --generic-configurations '{"acrUseManagedIdentityCreds": true}' -o none 2>/dev/null || \
+# Ensure managed identity ACR pull is disabled (no MSI sidecar)
 az resource update \
     --ids "$(az webapp show --name "$ADMIN_APP" --resource-group "$RESOURCE_GROUP" --query id -o tsv)/config/web" \
-    --set properties.acrUseManagedIdentityCreds=true -o none
+    --set properties.acrUseManagedIdentityCreds=false -o none 2>/dev/null || true
 
 # App settings (using Key Vault references for secrets)
 az webapp config appsettings set \
@@ -484,7 +526,8 @@ az webapp config appsettings set \
         "MARKETPLACE_API_VERSION=2018-08-31" \
         "KNOWN_USERS=${PUBLISHER_ADMIN_USERS}" \
         "RUST_LOG=info" \
-        "PORT=3000" -o none
+        "PORT=3000" \
+        "WEBSITE_VNET_ROUTE_ALL=0" -o none
 
 # Harden: HTTPS-only, always-on, HTTP/2
 az webapp update \
@@ -505,8 +548,9 @@ az webapp vnet-integration add \
     --vnet "$VNET_NAME" \
     --subnet web -o none
 
-# Whitelist Admin Web App outbound IPs on the ACR network rules
+# Whitelist Admin Web App outbound IPs on ACR and Key Vault
 acr_whitelist_webapp_ips "$ADMIN_APP" "$RESOURCE_GROUP"
+kv_whitelist_webapp_ips "$ADMIN_APP" "$RESOURCE_GROUP"
 
 info "Admin Web App ready: $ADMIN_URL"
 
@@ -525,30 +569,30 @@ CUSTOMER_IDENTITY=$(az webapp identity assign \
     --identities "[system]" \
     --query principalId -o tsv)
 
-acr_az role assignment create \
-    --assignee "$CUSTOMER_IDENTITY" \
-    --role AcrPull \
-    --scope "$ACR_ID" -o none
-
-az keyvault set-policy \
-    --name "$KEY_VAULT" \
-    --resource-group "$RESOURCE_GROUP" \
-    --object-id "$CUSTOMER_IDENTITY" \
-    --secret-permissions get list -o none
+info "  Waiting for identity propagation (up to 120s)..."
+for i in $(seq 1 12); do
+    if az keyvault set-policy \
+        --name "$KEY_VAULT" \
+        --resource-group "$RESOURCE_GROUP" \
+        --object-id "$CUSTOMER_IDENTITY" \
+        --secret-permissions get list -o none 2>/dev/null; then
+        break
+    fi
+    info "  Not propagated yet, retrying in 10s (attempt $i/12)..."
+    sleep 10
+done
 
 az webapp config container set \
     --name "$CUSTOMER_APP" \
     --resource-group "$RESOURCE_GROUP" \
-    --docker-custom-image-name "$CUSTOMER_IMAGE" \
-    --docker-registry-server-url "https://${ACR_LOGIN_SERVER}" -o none
+    --container-image-name "$CUSTOMER_IMAGE" \
+    --container-registry-url "https://${ACR_LOGIN_SERVER}" \
+    --container-registry-user "$ACR_SP_ID" \
+    --container-registry-password "$ACR_SP_SECRET" -o none
 
-az webapp config set \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --generic-configurations '{"acrUseManagedIdentityCreds": true}' -o none 2>/dev/null || \
 az resource update \
     --ids "$(az webapp show --name "$CUSTOMER_APP" --resource-group "$RESOURCE_GROUP" --query id -o tsv)/config/web" \
-    --set properties.acrUseManagedIdentityCreds=true -o none
+    --set properties.acrUseManagedIdentityCreds=false -o none 2>/dev/null || true
 
 az webapp config appsettings set \
     --name "$CUSTOMER_APP" \
@@ -561,7 +605,8 @@ az webapp config appsettings set \
         "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
         "MARKETPLACE_API_VERSION=2018-08-31" \
         "RUST_LOG=info" \
-        "PORT=3001" -o none
+        "PORT=3001" \
+        "WEBSITE_VNET_ROUTE_ALL=0" -o none
 
 az webapp update \
     --name "$CUSTOMER_APP" \
@@ -580,8 +625,9 @@ az webapp vnet-integration add \
     --vnet "$VNET_NAME" \
     --subnet web -o none
 
-# Whitelist Customer Web App outbound IPs on the ACR network rules
+# Whitelist Customer Web App outbound IPs on ACR and Key Vault
 acr_whitelist_webapp_ips "$CUSTOMER_APP" "$RESOURCE_GROUP"
+kv_whitelist_webapp_ips "$CUSTOMER_APP" "$RESOURCE_GROUP"
 
 info "Customer Web App ready: $CUSTOMER_URL"
 
