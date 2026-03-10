@@ -301,9 +301,9 @@ info "Key Vault ready: $KEY_VAULT"
 section "Azure Container Registry"
 
 # Helper: run an az command optionally scoped to a different subscription.
-acr_az() { 
+acr_az() {
     if [[ -n "$ACR_SUBSCRIPTION" ]]; then
-        az --subscription "$ACR_SUBSCRIPTION" "$@"
+        az "$@" --subscription "$ACR_SUBSCRIPTION"
     else
         az "$@"
     fi
