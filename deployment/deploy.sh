@@ -238,19 +238,29 @@ az network private-dns link vnet create \
     --virtual-network "$VNET_NAME" \
     --registration-enabled false -o none 2>/dev/null || true
 
-az postgres flexible-server create \
+if az postgres flexible-server show \
     --resource-group "$RESOURCE_GROUP" \
-    --name "$DB_SERVER_NAME" \
-    --location "$LOCATION" \
-    --admin-user "$DB_ADMIN_USER" \
-    --admin-password "$DB_ADMIN_PASS" \
-    --sku-name Standard_B1ms \
-    --tier Burstable \
-    --version 14 \
-    --storage-size 32 \
-    --subnet "$DB_SUBNET_ID" \
-    --private-dns-zone "$DB_PRIVATE_DNS_ZONE" \
-    --yes -o none 2>/dev/null || warn "PostgreSQL server may already exist"
+    --name "$DB_SERVER_NAME" -o none 2>/dev/null; then
+    info "PostgreSQL server exists — updating admin password to match..."
+    az postgres flexible-server update \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$DB_SERVER_NAME" \
+        --admin-password "$DB_ADMIN_PASS" -o none
+else
+    az postgres flexible-server create \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$DB_SERVER_NAME" \
+        --location "$LOCATION" \
+        --admin-user "$DB_ADMIN_USER" \
+        --admin-password "$DB_ADMIN_PASS" \
+        --sku-name Standard_B1ms \
+        --tier Burstable \
+        --version 14 \
+        --storage-size 32 \
+        --subnet "$DB_SUBNET_ID" \
+        --private-dns-zone "$DB_PRIVATE_DNS_ZONE" \
+        --yes -o none
+fi
 
 az postgres flexible-server db create \
     --resource-group "$RESOURCE_GROUP" \
