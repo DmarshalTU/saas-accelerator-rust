@@ -58,7 +58,7 @@ ENV VITE_ADMIN_API_URL=$VITE_ADMIN_API_URL \
 RUN npm run build
 
 # ── Runtime image ──────────────────────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates libssl3 nginx && \
     rm -rf /var/lib/apt/lists/* && \
