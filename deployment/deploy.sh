@@ -245,16 +245,7 @@ az postgres flexible-server create \
     --storage-size 32 \
     --subnet "$DB_SUBNET_ID" \
     --private-dns-zone "$DB_PRIVATE_DNS_ZONE" \
-    --yes \
-    --no-wait -o none 2>/dev/null || warn "PostgreSQL server may already exist"
-
-info "Waiting for PostgreSQL server to be ready (up to 15 min)..."
-az postgres flexible-server wait \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$DB_SERVER_NAME" \
-    --created \
-    --interval 30 \
-    --timeout 900 2>/dev/null || true
+    --yes -o none 2>/dev/null || warn "PostgreSQL server may already exist"
 
 az postgres flexible-server db create \
     --resource-group "$RESOURCE_GROUP" \
