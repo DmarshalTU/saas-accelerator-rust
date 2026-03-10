@@ -126,7 +126,9 @@ for app in "$ADMIN_APP" "$CUSTOMER_APP"; do
         --settings \
             "DOCKER_REGISTRY_SERVER_URL=https://${ACR_LOGIN_SERVER}" \
             "DOCKER_REGISTRY_SERVER_USERNAME=${ACR_USER}" \
-            "DOCKER_REGISTRY_SERVER_PASSWORD=${ACR_PASS}" -o none
+            "DOCKER_REGISTRY_SERVER_PASSWORD=${ACR_PASS}" \
+            "WEBSITE_DNS_SERVER=168.63.129.16" \
+            "WEBSITES_PORT=80" -o none
     az webapp config set \
         --name "$app" \
         --resource-group "$RESOURCE_GROUP" \

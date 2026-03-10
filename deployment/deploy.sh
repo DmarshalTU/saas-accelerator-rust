@@ -527,7 +527,7 @@ configure_webapp() {
             "WEBSITES_PORT=80" \
             "PORT=$port" \
             "RUST_LOG=info" \
-            "WEBSITE_VNET_ROUTE_ALL=0" \
+            "WEBSITE_DNS_SERVER=168.63.129.16" \
             "$@" -o none
 
     # Set container image explicitly
@@ -586,17 +586,6 @@ configure_webapp "$CUSTOMER_APP" "$CUSTOMER_IMAGE" "3001" \
     "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
     "MARKETPLACE_API_VERSION=2018-08-31"
 info "Customer Web App ready: $CUSTOMER_URL"
-
-# ── DB Migrations ──────────────────────────────────────────────────────────────
-section "Database migrations"
-if command -v sqlx &>/dev/null; then
-    info "Running sqlx migrations..."
-    (cd "$REPO_ROOT/crates/data" && DATABASE_URL="$DATABASE_URL" sqlx migrate run)
-    info "Migrations complete."
-else
-    warn "sqlx CLI not found — run migrations manually:"
-    warn "  cd crates/data && DATABASE_URL='$DATABASE_URL' sqlx migrate run"
-fi
 
 # ── Seed publisher admin users ─────────────────────────────────────────────────
 section "Seeding publisher admin users"
