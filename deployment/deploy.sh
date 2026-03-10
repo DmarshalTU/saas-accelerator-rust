@@ -399,6 +399,7 @@ az container create \
     --registry-login-server "$ACR_LOGIN_SERVER" \
     --registry-username "$ACR_USER" \
     --registry-password "$ACR_PASS" \
+    --os-type Linux \
     --restart-policy Never \
     --vnet "$VNET_NAME" \
     --subnet aci \
