@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.4
 # Customer site: customer-api (Rust) + static UI (React), served by nginx.
 # Build: docker build --build-arg VITE_ADMIN_API_URL=... --build-arg VITE_CUSTOMER_API_URL=... -f deployment/Dockerfile.customer-site .
 
@@ -35,16 +34,12 @@ RUN mkdir -p \
     printf 'pub fn lib() {}' > crates/data/src/lib.rs && \
     printf 'pub fn lib() {}' > crates/marketplace/src/lib.rs
 
-# Build and cache dependencies.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo build --release --locked --bin customer-api 2>/dev/null || true
+# Pre-build deps with stubs to cache the dependency layer.
+RUN cargo build --release --locked --bin customer-api 2>/dev/null || true
 
 # Now copy real source and build.
 COPY crates ./crates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo build --release --locked --bin customer-api && \
+RUN cargo build --release --locked --bin customer-api && \
     cp /app/target/release/customer-api /usr/local/bin/customer-api
 
 # ── Frontend build ─────────────────────────────────────────────────────────────
