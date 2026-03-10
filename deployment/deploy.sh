@@ -221,7 +221,7 @@ info "VNet ready: $VNET_NAME"
 # ── PostgreSQL Flexible Server ────────────────────────────────────────────────
 section "PostgreSQL"
 DB_ADMIN_USER="saasadmin"
-DB_ADMIN_PASS="$(openssl rand -base64 32 | tr -d '/+=')Aa1!"
+DB_ADMIN_PASS="$(openssl rand -base64 32 | tr -d '/+=')Aa1x"
 DB_SUBNET_ID=$(az network vnet subnet show \
     --resource-group "$RESOURCE_GROUP" \
     --vnet-name "$VNET_NAME" -n db \
@@ -266,6 +266,13 @@ az postgres flexible-server db create \
     --resource-group "$RESOURCE_GROUP" \
     --server-name "$DB_SERVER_NAME" \
     --database-name "$DB_NAME" -o none 2>/dev/null || true
+
+# Allow extensions required by migrations
+az postgres flexible-server parameter set \
+    --resource-group "$RESOURCE_GROUP" \
+    --server-name "$DB_SERVER_NAME" \
+    --name azure.extensions \
+    --value uuid-ossp -o none
 
 DB_HOST="${DB_SERVER_NAME}.postgres.database.azure.com"
 DATABASE_URL="postgresql://${DB_ADMIN_USER}:${DB_ADMIN_PASS}@${DB_HOST}:5432/${DB_NAME}?sslmode=require"
