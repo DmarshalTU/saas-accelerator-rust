@@ -2,7 +2,7 @@
 # Build: docker build --build-arg VITE_ADMIN_API_URL=... --build-arg VITE_CUSTOMER_API_URL=... -f deployment/Dockerfile.admin-site .
 
 # ── Rust build ─────────────────────────────────────────────────────────────────
-FROM rust:1.83-slim-bookworm AS api-builder
+FROM rust:1.93.1-slim-trixie AS api-builder
 WORKDIR /app
 
 RUN apt-get update && \
