@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for SaaS Accelerator Rust Edition
 
 # Build stage (slim-trixie so glibc matches debian:trixie-slim runtime)
-FROM acrcorengau10tix.azurecr.io/rust:1.93.1-slim-trixie AS builder
+FROM rust:1.93.1-slim-trixie AS builder
 
 WORKDIR /app
 

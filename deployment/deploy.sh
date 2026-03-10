@@ -28,15 +28,6 @@ die()     { error "$*"; exit 1; }
 on_error() { error "Script failed at line $1 (exit $2)"; error "Log: $DEPLOY_LOG"; }
 trap 'on_error $LINENO $?' ERR
 
-# ── prerequisites ─────────────────────────────────────────────────────────────
-check_prereqs() {
-    section "Checking prerequisites"
-    for cmd in az docker jq curl; do
-        command -v "$cmd" &>/dev/null || die "'$cmd' not found. Please install it."
-    done
-    info "All prerequisites found."
-}
-
 # ── load .env if present ──────────────────────────────────────────────────────
 ENV_FILE="$SCRIPT_DIR/.env"
 [[ -f "$ENV_FILE" ]] && { info "Loading $ENV_FILE"; set -a; source "$ENV_FILE"; set +a; }
@@ -48,42 +39,39 @@ LOCATION="${LOCATION:-}"
 PUBLISHER_ADMIN_USERS="${PUBLISHER_ADMIN_USERS:-}"
 TENANT_ID="${TENANT_ID:-}"
 AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:-}"
-AD_APPLICATION_ID="${AD_APPLICATION_ID:-}"          # Fulfillment API app reg (optional, created if empty)
+AD_APPLICATION_ID="${AD_APPLICATION_ID:-}"
 AD_APPLICATION_SECRET="${AD_APPLICATION_SECRET:-}"
-AD_APPLICATION_ID_ADMIN="${AD_APPLICATION_ID_ADMIN:-}" # Admin SSO app reg (optional, created if empty)
+AD_APPLICATION_ID_ADMIN="${AD_APPLICATION_ID_ADMIN:-}"
 DB_SERVER_NAME="${DB_SERVER_NAME:-}"
 DB_NAME="${DB_NAME:-}"
 KEY_VAULT="${KEY_VAULT:-}"
 ACR_NAME="${ACR_NAME:-}"
-ACR_SUBSCRIPTION="${ACR_SUBSCRIPTION:-}"   # Set if ACR is in a different subscription
-LOGO_URL_PNG="${LOGO_URL_PNG:-}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --prefix)               WEB_APP_NAME_PREFIX="$2"; shift 2 ;;
-        --resource-group)       RESOURCE_GROUP="$2"; shift 2 ;;
-        --location)             LOCATION="$2"; shift 2 ;;
+        --prefix)                WEB_APP_NAME_PREFIX="$2"; shift 2 ;;
+        --resource-group)        RESOURCE_GROUP="$2"; shift 2 ;;
+        --location)              LOCATION="$2"; shift 2 ;;
         --publisher-admin-users) PUBLISHER_ADMIN_USERS="$2"; shift 2 ;;
-        --tenant-id)            TENANT_ID="$2"; shift 2 ;;
-        --subscription)         AZURE_SUBSCRIPTION_ID="$2"; shift 2 ;;
-        --ad-app-id)            AD_APPLICATION_ID="$2"; shift 2 ;;
-        --ad-app-secret)        AD_APPLICATION_SECRET="$2"; shift 2 ;;
-        --ad-admin-app-id)      AD_APPLICATION_ID_ADMIN="$2"; shift 2 ;;
-        --db-server)            DB_SERVER_NAME="$2"; shift 2 ;;
-        --db-name)              DB_NAME="$2"; shift 2 ;;
-        --key-vault)            KEY_VAULT="$2"; shift 2 ;;
-        --acr)                  ACR_NAME="$2"; shift 2 ;;
-        --acr-subscription)     ACR_SUBSCRIPTION="$2"; shift 2 ;;
+        --tenant-id)             TENANT_ID="$2"; shift 2 ;;
+        --subscription)          AZURE_SUBSCRIPTION_ID="$2"; shift 2 ;;
+        --ad-app-id)             AD_APPLICATION_ID="$2"; shift 2 ;;
+        --ad-app-secret)         AD_APPLICATION_SECRET="$2"; shift 2 ;;
+        --ad-admin-app-id)       AD_APPLICATION_ID_ADMIN="$2"; shift 2 ;;
+        --db-server)             DB_SERVER_NAME="$2"; shift 2 ;;
+        --db-name)               DB_NAME="$2"; shift 2 ;;
+        --key-vault)             KEY_VAULT="$2"; shift 2 ;;
+        --acr)                   ACR_NAME="$2"; shift 2 ;;
         *) die "Unknown option: $1" ;;
     esac
 done
 
-[[ -z "$WEB_APP_NAME_PREFIX" ]] && die "--prefix (WEB_APP_NAME_PREFIX) is required"
-[[ -z "$LOCATION" ]]            && die "--location is required"
-[[ -z "$PUBLISHER_ADMIN_USERS" ]] && die "--publisher-admin-users is required"
+[[ -z "$WEB_APP_NAME_PREFIX" ]]    && die "--prefix (WEB_APP_NAME_PREFIX) is required"
+[[ -z "$LOCATION" ]]               && die "--location is required"
+[[ -z "$PUBLISHER_ADMIN_USERS" ]]  && die "--publisher-admin-users is required"
 [[ "${#WEB_APP_NAME_PREFIX}" -gt 21 ]] && die "Prefix must be ≤ 21 characters"
 
-# ── derive resource names (mirrors Deploy.ps1 naming) ────────────────────────
+# ── derive resource names ─────────────────────────────────────────────────────
 RESOURCE_GROUP="${RESOURCE_GROUP:-$WEB_APP_NAME_PREFIX}"
 DB_SERVER_NAME="${DB_SERVER_NAME:-${WEB_APP_NAME_PREFIX}-db}"
 DB_NAME="${DB_NAME:-${WEB_APP_NAME_PREFIX}AMPSaaSDB}"
@@ -108,14 +96,18 @@ echo "  Admin URL:        $ADMIN_URL"
 echo "  Customer URL:     $CUSTOMER_URL"
 echo "  Publisher users:  $PUBLISHER_ADMIN_USERS"
 
-check_prereqs
+# ── prerequisites ─────────────────────────────────────────────────────────────
+section "Checking prerequisites"
+for cmd in az jq; do
+    command -v "$cmd" &>/dev/null || die "'$cmd' not found. Please install it."
+done
+info "Prerequisites OK."
 
 # ── subscription ──────────────────────────────────────────────────────────────
 if [[ -n "$AZURE_SUBSCRIPTION_ID" ]]; then
     info "Setting subscription: $AZURE_SUBSCRIPTION_ID"
     az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 fi
-
 CURRENT_TENANT=$(az account show --query tenantId -o tsv)
 TENANT_ID="${TENANT_ID:-$CURRENT_TENANT}"
 info "Tenant: $TENANT_ID"
@@ -123,7 +115,7 @@ info "Tenant: $TENANT_ID"
 # ── App Registrations ─────────────────────────────────────────────────────────
 section "App Registrations"
 
-# 1) Fulfillment API app reg (single-tenant, client credentials)
+# 1) Fulfillment API app reg
 if [[ -z "$AD_APPLICATION_ID" ]]; then
     EXISTING_FULFILL_ID=$(az ad app list \
         --display-name "${WEB_APP_NAME_PREFIX}-FulfillmentAppReg" \
@@ -140,7 +132,6 @@ if [[ -z "$AD_APPLICATION_ID" ]]; then
             --display-name "${WEB_APP_NAME_PREFIX}-FulfillmentAppReg" \
             --query id -o tsv)
         AD_APPLICATION_ID=$(az ad app show --id "$AD_OBJ_ID" --query appId -o tsv)
-        info "  Fulfillment App ID: $AD_APPLICATION_ID"
     fi
     az ad sp create --id "$AD_APPLICATION_ID" --only-show-errors >/dev/null 2>&1 || true
     sleep 5
@@ -155,7 +146,7 @@ else
     info "  Using provided Fulfillment App ID: $AD_APPLICATION_ID"
 fi
 
-# 2) Admin Portal SSO app reg (single-tenant, id_token, openid+profile+email)
+# 2) Admin Portal SSO app reg
 if [[ -z "$AD_APPLICATION_ID_ADMIN" ]]; then
     EXISTING_ADMIN_ID=$(az ad app list \
         --display-name "${WEB_APP_NAME_PREFIX}-AdminPortalAppReg" \
@@ -164,16 +155,14 @@ if [[ -z "$AD_APPLICATION_ID_ADMIN" ]]; then
         info "  Reusing existing Admin Portal App Registration: $EXISTING_ADMIN_ID"
         AD_APPLICATION_ID_ADMIN="$EXISTING_ADMIN_ID"
     else
-    info "Creating Admin Portal SSO App Registration..."
-    ADMIN_APP_REG_BODY=$(cat <<EOF
+        info "Creating Admin Portal SSO App Registration..."
+        ADMIN_APP_REG_BODY=$(cat <<EOF
 {
   "displayName": "${WEB_APP_NAME_PREFIX}-AdminPortalAppReg",
   "api": { "requestedAccessTokenVersion": 2 },
   "signInAudience": "AzureADMyOrg",
   "web": {
-    "redirectUris": [
-      "${ADMIN_URL}/auth/callback"
-    ],
+    "redirectUris": ["${ADMIN_URL}/auth/callback"],
     "logoutUrl": "${ADMIN_URL}/auth/logout",
     "implicitGrantSettings": { "enableIdTokenIssuance": true }
   },
@@ -184,14 +173,14 @@ if [[ -z "$AD_APPLICATION_ID_ADMIN" ]]; then
 }
 EOF
 )
-    AD_APPLICATION_ID_ADMIN=$(az rest \
-        --method POST \
-        --headers "Content-Type=application/json" \
-        --uri "https://graph.microsoft.com/v1.0/applications" \
-        --body "$ADMIN_APP_REG_BODY" \
-        --query appId -o tsv)
-    info "  Admin SSO App ID: $AD_APPLICATION_ID_ADMIN"
-    fi  # end else (not existing)
+        AD_APPLICATION_ID_ADMIN=$(az rest \
+            --method POST \
+            --headers "Content-Type=application/json" \
+            --uri "https://graph.microsoft.com/v1.0/applications" \
+            --body "$ADMIN_APP_REG_BODY" \
+            --query appId -o tsv)
+        info "  Admin SSO App ID: $AD_APPLICATION_ID_ADMIN"
+    fi
 else
     info "  Using provided Admin SSO App ID: $AD_APPLICATION_ID_ADMIN"
 fi
@@ -206,28 +195,28 @@ section "Virtual Network"
 az network vnet create \
     --resource-group "$RESOURCE_GROUP" \
     --name "$VNET_NAME" \
-    --address-prefixes "10.0.0.0/20" -o none
+    --address-prefixes "10.0.0.0/20" -o none 2>/dev/null || true
 az network vnet subnet create \
     --resource-group "$RESOURCE_GROUP" \
     --vnet-name "$VNET_NAME" -n default \
-    --address-prefixes "10.0.0.0/24" -o none
+    --address-prefixes "10.0.0.0/24" -o none 2>/dev/null || true
 az network vnet subnet create \
     --resource-group "$RESOURCE_GROUP" \
     --vnet-name "$VNET_NAME" -n web \
     --address-prefixes "10.0.1.0/24" \
     --service-endpoints "Microsoft.KeyVault" \
-    --delegations "Microsoft.Web/serverfarms" -o none
+    --delegations "Microsoft.Web/serverfarms" -o none 2>/dev/null || true
 az network vnet subnet create \
     --resource-group "$RESOURCE_GROUP" \
     --vnet-name "$VNET_NAME" -n db \
     --address-prefixes "10.0.2.0/24" \
-    --delegations "Microsoft.DBforPostgreSQL/flexibleServers" -o none
-info "VNet ready: $VNET_NAME (10.0.0.0/20)"
+    --delegations "Microsoft.DBforPostgreSQL/flexibleServers" -o none 2>/dev/null || true
+info "VNet ready: $VNET_NAME"
 
 # ── PostgreSQL Flexible Server ────────────────────────────────────────────────
 section "PostgreSQL"
 DB_ADMIN_USER="saasadmin"
-DB_ADMIN_PASS="$(openssl rand -base64 32 | tr -d '/+=')Aa1!"   # meets Azure complexity rules
+DB_ADMIN_PASS="$(openssl rand -base64 32 | tr -d '/+=')Aa1!"
 DB_SUBNET_ID=$(az network vnet subnet show \
     --resource-group "$RESOURCE_GROUP" \
     --vnet-name "$VNET_NAME" -n db \
@@ -275,17 +264,13 @@ az keyvault create \
     --location "$LOCATION" \
     --enable-rbac-authorization false -o none 2>/dev/null || warn "Key Vault may already exist"
 
-az keyvault secret set --vault-name "$KEY_VAULT" --name "DatabaseUrl"          --value "$DATABASE_URL" -o none
-az keyvault secret set --vault-name "$KEY_VAULT" --name "ADApplicationSecret"  --value "$AD_APPLICATION_SECRET" -o none
-az keyvault secret set --vault-name "$KEY_VAULT" --name "ADApplicationId"      --value "$AD_APPLICATION_ID" -o none
-az keyvault secret set --vault-name "$KEY_VAULT" --name "ADAdminAppId"         --value "$AD_APPLICATION_ID_ADMIN" -o none
-az keyvault secret set --vault-name "$KEY_VAULT" --name "TenantId"             --value "$TENANT_ID" -o none
+az keyvault secret set --vault-name "$KEY_VAULT" --name "DatabaseUrl"         --value "$DATABASE_URL" -o none
+az keyvault secret set --vault-name "$KEY_VAULT" --name "ADApplicationSecret" --value "$AD_APPLICATION_SECRET" -o none
+az keyvault secret set --vault-name "$KEY_VAULT" --name "ADApplicationId"     --value "$AD_APPLICATION_ID" -o none
+az keyvault secret set --vault-name "$KEY_VAULT" --name "ADAdminAppId"        --value "$AD_APPLICATION_ID_ADMIN" -o none
+az keyvault secret set --vault-name "$KEY_VAULT" --name "TenantId"            --value "$TENANT_ID" -o none
 
-# Restrict KV to VNet web subnet
-WEB_SUBNET_ID=$(az network vnet subnet show \
-    --resource-group "$RESOURCE_GROUP" \
-    --vnet-name "$VNET_NAME" -n web \
-    --query id -o tsv)
+# Restrict KV to VNet web subnet only
 az keyvault update \
     --name "$KEY_VAULT" \
     --resource-group "$RESOURCE_GROUP" \
@@ -299,58 +284,25 @@ info "Key Vault ready: $KEY_VAULT"
 
 # ── Azure Container Registry ───────────────────────────────────────────────────
 section "Azure Container Registry"
-
-# Helper: run an az command optionally scoped to a different subscription.
-acr_az() {
-    if [[ -n "$ACR_SUBSCRIPTION" ]]; then
-        az "$@" --subscription "$ACR_SUBSCRIPTION"
-    else
-        az "$@"
-    fi
-}
-
-ACR_EXISTS=$(acr_az acr show --name "$ACR_NAME" --query name -o tsv 2>/dev/null || true)
+ACR_EXISTS=$(az acr show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" \
+    --query name -o tsv 2>/dev/null || true)
 if [[ -z "$ACR_EXISTS" ]]; then
-    info "Creating ACR: $ACR_NAME (Basic, admin disabled)"
-    acr_az acr create \
+    info "Creating ACR: $ACR_NAME"
+    az acr create \
         --resource-group "$RESOURCE_GROUP" \
         --name "$ACR_NAME" \
         --sku Basic \
         --location "$LOCATION" \
-        --admin-enabled false -o none
+        --admin-enabled true -o none
 else
-    info "Using existing ACR: $ACR_NAME (subscription: ${ACR_SUBSCRIPTION:-current})"
+    info "Using existing ACR: $ACR_NAME"
+    az acr update --name "$ACR_NAME" --admin-enabled true -o none
 fi
 
-ACR_LOGIN_SERVER=$(acr_az acr show --name "$ACR_NAME" --query loginServer -o tsv)
-ACR_ID=$(acr_az acr show --name "$ACR_NAME" --query id -o tsv)
-info "ACR: $ACR_LOGIN_SERVER  (id: $ACR_ID)"
-
-# Create (or reuse) a service principal for ACR pull — avoids MSI sidecar issues
-# with VNet-integrated Web Apps and cross-subscription ACRs.
-SP_NAME="${WEB_APP_NAME_PREFIX}-acr-pull"
-EXISTING_SP=$(az ad sp list --display-name "$SP_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)
-if [[ -n "$EXISTING_SP" ]]; then
-    info "Reusing existing ACR pull SP: $EXISTING_SP"
-    ACR_SP_ID="$EXISTING_SP"
-    # Ensure the SP object exists (may have been deleted while app registration persists)
-    az ad sp create --id "$ACR_SP_ID" --only-show-errors >/dev/null 2>&1 || true
-    sleep 5
-    ACR_SP_SECRET=$(az ad app credential reset \
-        --id "$ACR_SP_ID" --append \
-        --display-name "deploy-$(date +%Y%m%d)" \
-        --years 2 --query password -o tsv --only-show-errors)
-else
-    info "Creating ACR pull service principal: $SP_NAME"
-    SP_JSON=$(az ad sp create-for-rbac \
-        --name "$SP_NAME" \
-        --role AcrPull \
-        --scopes "$ACR_ID" \
-        --years 2 --only-show-errors)
-    ACR_SP_ID=$(echo "$SP_JSON" | jq -r '.appId')
-    ACR_SP_SECRET=$(echo "$SP_JSON" | jq -r '.password')
-fi
-info "ACR pull SP ready: $ACR_SP_ID"
+ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+ACR_USER=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
+ACR_PASS=$(az acr credential show --name "$ACR_NAME" --query passwords[0].value -o tsv)
+info "ACR ready: $ACR_LOGIN_SERVER"
 
 # ── App Service Plan ───────────────────────────────────────────────────────────
 section "App Service Plan"
@@ -368,36 +320,31 @@ section "Docker build and push"
 BUILD_TAG="$(date +%Y%m%d%H%M%S)"
 ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${BUILD_TAG}"
 CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:${BUILD_TAG}"
-ADMIN_LATEST="${ACR_LOGIN_SERVER}/admin-site:latest"
-CUSTOMER_LATEST="${ACR_LOGIN_SERVER}/customer-site:latest"
 
-# Detect build method: use local Docker if daemon is available, otherwise az acr build
 if docker info >/dev/null 2>&1; then
-    info "Docker daemon detected — building locally and pushing to ACR..."
-    az acr login --name "$ACR_NAME" ${ACR_SUBSCRIPTION:+--subscription "$ACR_SUBSCRIPTION"}
+    info "Docker daemon detected — building locally..."
+    az acr login --name "$ACR_NAME"
 
-    info "Building admin-site (tag: $BUILD_TAG)..."
-    DOCKER_BUILDKIT=1 docker build \
+    docker build \
         --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
         --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
         -f "$SCRIPT_DIR/Dockerfile.admin-site" \
-        -t "$ADMIN_IMAGE" -t "$ADMIN_LATEST" "$REPO_ROOT"
+        -t "$ADMIN_IMAGE" -t "${ACR_LOGIN_SERVER}/admin-site:latest" "$REPO_ROOT"
 
-    info "Building customer-site (tag: $BUILD_TAG)..."
-    DOCKER_BUILDKIT=1 docker build \
+    docker build \
         --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
         --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
         -f "$SCRIPT_DIR/Dockerfile.customer-site" \
-        -t "$CUSTOMER_IMAGE" -t "$CUSTOMER_LATEST" "$REPO_ROOT"
+        -t "$CUSTOMER_IMAGE" -t "${ACR_LOGIN_SERVER}/customer-site:latest" "$REPO_ROOT"
 
-    info "Pushing images to ACR..."
-    docker push "$ADMIN_IMAGE" && docker push "$ADMIN_LATEST"
-    docker push "$CUSTOMER_IMAGE" && docker push "$CUSTOMER_LATEST"
+    docker push "$ADMIN_IMAGE"
+    docker push "${ACR_LOGIN_SERVER}/admin-site:latest"
+    docker push "$CUSTOMER_IMAGE"
+    docker push "${ACR_LOGIN_SERVER}/customer-site:latest"
 else
     info "No Docker daemon — using az acr build (remote build in ACR)..."
 
-    info "Building admin-site (tag: $BUILD_TAG)..."
-    acr_az acr build \
+    az acr build \
         --registry "$ACR_NAME" \
         --image "admin-site:${BUILD_TAG}" \
         --image "admin-site:latest" \
@@ -406,8 +353,7 @@ else
         --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
         "$REPO_ROOT"
 
-    info "Building customer-site (tag: $BUILD_TAG)..."
-    acr_az acr build \
+    az acr build \
         --registry "$ACR_NAME" \
         --image "customer-site:${BUILD_TAG}" \
         --image "customer-site:latest" \
@@ -419,33 +365,15 @@ fi
 
 info "Images ready (tag: $BUILD_TAG)"
 
-# ── Network helpers: whitelist Web App outbound IPs on ACR and Key Vault ──────
-# Required so the Web App can pull images from a network-restricted ACR,
-# and so the App Service platform can resolve Key Vault secret references.
+# ── Helper: whitelist Web App outbound IPs on Key Vault ───────────────────────
 _webapp_outbound_ips() {
     az webapp show --name "$1" --resource-group "$2" \
         --query "possibleOutboundIpAddresses" -o tsv | tr ',' '\n' | sort -u
 }
 
-acr_whitelist_webapp_ips() {
-    local app_name="$1" rg="$2"
-    info "  Whitelisting $app_name outbound IPs on ACR $ACR_NAME..."
-    local count=0
-    while IFS= read -r ip; do
-        [[ -z "$ip" ]] && continue
-        acr_az acr network-rule add \
-            --name "$ACR_NAME" \
-            --ip-address "${ip}/32" -o none 2>/dev/null && count=$((count+1))
-    done <<< "$(_webapp_outbound_ips "$app_name" "$rg")"
-    info "  Added $count IP rules for $app_name to ACR"
-}
-
 kv_whitelist_webapp_ips() {
     local app_name="$1" rg="$2"
     info "  Whitelisting $app_name outbound IPs on Key Vault $KEY_VAULT..."
-    # KV firewall is set to Deny by default — temporarily open for rule addition,
-    # then re-lock. Control-plane operations (network-rule add) are not blocked
-    # by the data-plane firewall, so this works even when KV is locked.
     local count=0
     while IFS= read -r ip; do
         [[ -z "$ip" ]] && continue
@@ -458,177 +386,115 @@ kv_whitelist_webapp_ips() {
 }
 
 # ── Key Vault secret references ────────────────────────────────────────────────
-KV_REF_DB="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=DatabaseUrl) "
-KV_REF_SECRET="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADApplicationSecret) "
-KV_REF_APPID="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADApplicationId) "
-KV_REF_TENANT="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=TenantId) "
-KV_REF_ADMIN_APPID="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADAdminAppId) "
+KV_REF_DB="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=DatabaseUrl)"
+KV_REF_SECRET="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADApplicationSecret)"
+KV_REF_APPID="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADApplicationId)"
+KV_REF_TENANT="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=TenantId)"
+KV_REF_ADMIN_APPID="@Microsoft.KeyVault(VaultName=${KEY_VAULT};SecretName=ADAdminAppId)"
+
+# ── Helper: configure a web app ────────────────────────────────────────────────
+configure_webapp() {
+    local app_name="$1" image="$2" port="$3"
+    shift 3
+    # $@ = extra appsettings
+
+    info "  Creating/updating $app_name..."
+    az webapp create \
+        --resource-group "$RESOURCE_GROUP" \
+        --plan "$APP_PLAN" \
+        --name "$app_name" \
+        --deployment-container-image-name "$image" -o none 2>/dev/null || true
+
+    # System-assigned managed identity for Key Vault access
+    local identity
+    identity=$(az webapp identity assign \
+        --name "$app_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query principalId -o tsv)
+
+    # Wait for identity to propagate, then grant KV access
+    info "  Waiting for identity propagation (up to 120s)..."
+    for i in $(seq 1 12); do
+        if az keyvault set-policy \
+            --name "$KEY_VAULT" \
+            --resource-group "$RESOURCE_GROUP" \
+            --object-id "$identity" \
+            --secret-permissions get list -o none 2>/dev/null; then
+            break
+        fi
+        info "  Not propagated yet, retrying in 10s (attempt $i/12)..."
+        sleep 10
+    done
+
+    # Registry credentials via well-known app settings (most reliable method)
+    az webapp config appsettings set \
+        --name "$app_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --settings \
+            "DOCKER_REGISTRY_SERVER_URL=https://${ACR_LOGIN_SERVER}" \
+            "DOCKER_REGISTRY_SERVER_USERNAME=${ACR_USER}" \
+            "DOCKER_REGISTRY_SERVER_PASSWORD=${ACR_PASS}" \
+            "WEBSITES_PORT=80" \
+            "PORT=$port" \
+            "RUST_LOG=info" \
+            "WEBSITE_VNET_ROUTE_ALL=0" \
+            "$@" -o none
+
+    # Set container image explicitly
+    az webapp config set \
+        --name "$app_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --linux-fx-version "DOCKER|${image}" -o none
+
+    # Harden
+    az webapp update \
+        --name "$app_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --https-only true -o none
+    az webapp config set \
+        --name "$app_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --always-on true \
+        --http20-enabled true \
+        --min-tls-version "1.2" -o none
+
+    # VNet integration
+    az webapp vnet-integration add \
+        --name "$app_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --vnet "$VNET_NAME" \
+        --subnet web -o none 2>/dev/null || true
+
+    # Whitelist outbound IPs on Key Vault
+    kv_whitelist_webapp_ips "$app_name" "$RESOURCE_GROUP"
+}
 
 # ── Admin Web App ──────────────────────────────────────────────────────────────
 section "Admin Web App"
-az webapp create \
-    --resource-group "$RESOURCE_GROUP" \
-    --plan "$APP_PLAN" \
-    --name "$ADMIN_APP" \
-    --deployment-container-image-name "$ADMIN_IMAGE" -o none 2>/dev/null || \
-    warn "Admin Web App may already exist"
-
-# Assign system identity (needed for Key Vault access only)
-ADMIN_IDENTITY=$(az webapp identity assign \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --identities "[system]" \
-    --query principalId -o tsv)
-
-# Grant Key Vault read access — retry until identity propagates to AAD graph
-info "  Waiting for identity propagation (up to 120s)..."
-for i in $(seq 1 12); do
-    if az keyvault set-policy \
-        --name "$KEY_VAULT" \
-        --resource-group "$RESOURCE_GROUP" \
-        --object-id "$ADMIN_IDENTITY" \
-        --secret-permissions get list -o none 2>/dev/null; then
-        break
-    fi
-    info "  Not propagated yet, retrying in 10s (attempt $i/12)..."
-    sleep 10
-done
-
-# Configure container with SP credentials — avoids MSI sidecar + VNet issues
-az webapp config container set \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --container-image-name "$ADMIN_IMAGE" \
-    --container-registry-url "https://${ACR_LOGIN_SERVER}" \
-    --container-registry-user "$ACR_SP_ID" \
-    --container-registry-password "$ACR_SP_SECRET" -o none
-
-# Ensure managed identity ACR pull is disabled (no MSI sidecar)
-az resource update \
-    --ids "$(az webapp show --name "$ADMIN_APP" --resource-group "$RESOURCE_GROUP" --query id -o tsv)/config/web" \
-    --set properties.acrUseManagedIdentityCreds=false -o none 2>/dev/null || true
-
-# App settings (using Key Vault references for secrets)
-az webapp config appsettings set \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --settings \
-        "DATABASE_URL=${KV_REF_DB}" \
-        "SaaS_API_CLIENT_ID=${KV_REF_APPID}" \
-        "SaaS_API_CLIENT_SECRET=${KV_REF_SECRET}" \
-        "SaaS_API_TENANT_ID=${KV_REF_TENANT}" \
-        "AZURE_AD_TENANT_ID=${KV_REF_TENANT}" \
-        "AZURE_AD_CLIENT_ID=${KV_REF_ADMIN_APPID}" \
-        "AZURE_AD_CLIENT_SECRET=${KV_REF_SECRET}" \
-        "AZURE_AD_REDIRECT_URI=${ADMIN_URL}/auth/callback" \
-        "AZURE_AD_SIGNED_OUT_REDIRECT_URI=${ADMIN_URL}/admin" \
-        "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
-        "MARKETPLACE_API_VERSION=2018-08-31" \
-        "KNOWN_USERS=${PUBLISHER_ADMIN_USERS}" \
-        "RUST_LOG=info" \
-        "PORT=3000" \
-        "WEBSITE_VNET_ROUTE_ALL=0" -o none
-
-# Harden: HTTPS-only, always-on, HTTP/2
-az webapp update \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --https-only true -o none
-az webapp config set \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --always-on true \
-    --http20-enabled true \
-    --min-tls-version "1.2" -o none
-
-# VNet integration
-az webapp vnet-integration add \
-    --name "$ADMIN_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --vnet "$VNET_NAME" \
-    --subnet web -o none
-
-# Whitelist Admin Web App outbound IPs on ACR and Key Vault
-acr_whitelist_webapp_ips "$ADMIN_APP" "$RESOURCE_GROUP"
-kv_whitelist_webapp_ips "$ADMIN_APP" "$RESOURCE_GROUP"
-
+configure_webapp "$ADMIN_APP" "$ADMIN_IMAGE" "3000" \
+    "DATABASE_URL=${KV_REF_DB}" \
+    "SaaS_API_CLIENT_ID=${KV_REF_APPID}" \
+    "SaaS_API_CLIENT_SECRET=${KV_REF_SECRET}" \
+    "SaaS_API_TENANT_ID=${KV_REF_TENANT}" \
+    "AZURE_AD_TENANT_ID=${KV_REF_TENANT}" \
+    "AZURE_AD_CLIENT_ID=${KV_REF_ADMIN_APPID}" \
+    "AZURE_AD_CLIENT_SECRET=${KV_REF_SECRET}" \
+    "AZURE_AD_REDIRECT_URI=${ADMIN_URL}/auth/callback" \
+    "AZURE_AD_SIGNED_OUT_REDIRECT_URI=${ADMIN_URL}/admin" \
+    "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
+    "MARKETPLACE_API_VERSION=2018-08-31" \
+    "KNOWN_USERS=${PUBLISHER_ADMIN_USERS}"
 info "Admin Web App ready: $ADMIN_URL"
 
 # ── Customer Web App ───────────────────────────────────────────────────────────
 section "Customer Web App"
-az webapp create \
-    --resource-group "$RESOURCE_GROUP" \
-    --plan "$APP_PLAN" \
-    --name "$CUSTOMER_APP" \
-    --deployment-container-image-name "$CUSTOMER_IMAGE" -o none 2>/dev/null || \
-    warn "Customer Web App may already exist"
-
-CUSTOMER_IDENTITY=$(az webapp identity assign \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --identities "[system]" \
-    --query principalId -o tsv)
-
-info "  Waiting for identity propagation (up to 120s)..."
-for i in $(seq 1 12); do
-    if az keyvault set-policy \
-        --name "$KEY_VAULT" \
-        --resource-group "$RESOURCE_GROUP" \
-        --object-id "$CUSTOMER_IDENTITY" \
-        --secret-permissions get list -o none 2>/dev/null; then
-        break
-    fi
-    info "  Not propagated yet, retrying in 10s (attempt $i/12)..."
-    sleep 10
-done
-
-az webapp config container set \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --container-image-name "$CUSTOMER_IMAGE" \
-    --container-registry-url "https://${ACR_LOGIN_SERVER}" \
-    --container-registry-user "$ACR_SP_ID" \
-    --container-registry-password "$ACR_SP_SECRET" -o none
-
-az resource update \
-    --ids "$(az webapp show --name "$CUSTOMER_APP" --resource-group "$RESOURCE_GROUP" --query id -o tsv)/config/web" \
-    --set properties.acrUseManagedIdentityCreds=false -o none 2>/dev/null || true
-
-az webapp config appsettings set \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --settings \
-        "DATABASE_URL=${KV_REF_DB}" \
-        "SaaS_API_CLIENT_ID=${KV_REF_APPID}" \
-        "SaaS_API_CLIENT_SECRET=${KV_REF_SECRET}" \
-        "SaaS_API_TENANT_ID=${KV_REF_TENANT}" \
-        "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
-        "MARKETPLACE_API_VERSION=2018-08-31" \
-        "RUST_LOG=info" \
-        "PORT=3001" \
-        "WEBSITE_VNET_ROUTE_ALL=0" -o none
-
-az webapp update \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --https-only true -o none
-az webapp config set \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --always-on true \
-    --http20-enabled true \
-    --min-tls-version "1.2" -o none
-
-az webapp vnet-integration add \
-    --name "$CUSTOMER_APP" \
-    --resource-group "$RESOURCE_GROUP" \
-    --vnet "$VNET_NAME" \
-    --subnet web -o none
-
-# Whitelist Customer Web App outbound IPs on ACR and Key Vault
-acr_whitelist_webapp_ips "$CUSTOMER_APP" "$RESOURCE_GROUP"
-kv_whitelist_webapp_ips "$CUSTOMER_APP" "$RESOURCE_GROUP"
-
+configure_webapp "$CUSTOMER_APP" "$CUSTOMER_IMAGE" "3001" \
+    "DATABASE_URL=${KV_REF_DB}" \
+    "SaaS_API_CLIENT_ID=${KV_REF_APPID}" \
+    "SaaS_API_CLIENT_SECRET=${KV_REF_SECRET}" \
+    "SaaS_API_TENANT_ID=${KV_REF_TENANT}" \
+    "MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api" \
+    "MARKETPLACE_API_VERSION=2018-08-31"
 info "Customer Web App ready: $CUSTOMER_URL"
 
 # ── DB Migrations ──────────────────────────────────────────────────────────────
@@ -651,7 +517,8 @@ for EMAIL in "${ADMIN_EMAILS[@]}"; do
     if command -v psql &>/dev/null; then
         psql "$DATABASE_URL" -c \
             "INSERT INTO known_users (user_email, role_id) VALUES ('${EMAIL}', 1) ON CONFLICT (user_email) DO NOTHING;" \
-            -q 2>/dev/null && info "  Seeded: $EMAIL" || warn "  Could not seed $EMAIL (psql error or not connected)"
+            -q 2>/dev/null && info "  Seeded: $EMAIL" || \
+            warn "  Could not seed $EMAIL (psql error or not connected)"
     else
         warn "  psql not found — add $EMAIL to known_users manually (role_id=1)"
     fi
@@ -662,11 +529,11 @@ section "Deployment complete"
 echo ""
 echo -e "${GREEN}✅  Resources created in resource group: ${RESOURCE_GROUP}${NC}"
 echo ""
-echo "  Admin portal:       $ADMIN_URL"
-echo "  Customer portal:    $CUSTOMER_URL"
-echo "  ACR:                $ACR_LOGIN_SERVER"
-echo "  Key Vault:          $KEY_VAULT"
-echo "  PostgreSQL:         $DB_HOST"
+echo "  Admin portal:    $ADMIN_URL"
+echo "  Customer portal: $CUSTOMER_URL"
+echo "  ACR:             $ACR_LOGIN_SERVER"
+echo "  Key Vault:       $KEY_VAULT"
+echo "  PostgreSQL:      $DB_HOST"
 echo ""
 echo -e "${CYAN}▶  Next steps:${NC}"
 echo "  1. In Azure AD → App Registration '${WEB_APP_NAME_PREFIX}-AdminPortalAppReg',"
@@ -676,7 +543,9 @@ echo "     Landing Page:          ${CUSTOMER_URL}/"
 echo "     Webhook:               ${CUSTOMER_URL}/api/webhook"
 echo "     Tenant ID:             ${TENANT_ID}"
 echo "     AAD Application ID:    ${AD_APPLICATION_ID}"
-echo "  3. Verify Known Users in Admin UI: ${ADMIN_URL}/admin/known-users"
+echo "  3. Run DB migrations — from inside the VNet or via ACR task:"
+echo "     DATABASE_URL='${DATABASE_URL}' sqlx migrate run --source crates/data/migrations"
+echo "  4. Verify Known Users: ${ADMIN_URL}/admin/known-users"
 echo ""
 echo "  Log file: $DEPLOY_LOG"
 echo ""
