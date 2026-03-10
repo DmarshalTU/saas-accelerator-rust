@@ -409,6 +409,8 @@ az container create \
     --registry-username "$ACR_USER" \
     --registry-password "$ACR_PASS" \
     --os-type Linux \
+    --cpu 1 \
+    --memory 1 \
     --restart-policy Never \
     --vnet "$VNET_NAME" \
     --subnet aci \
