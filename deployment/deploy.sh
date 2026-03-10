@@ -338,10 +338,6 @@ info "App Service Plan ready: $APP_PLAN (B1 Linux)"
 
 # ── Build and push Docker images ───────────────────────────────────────────────
 section "Docker build and push"
-# az acr login uses your Azure AD token — works with network-restricted ACRs
-# (your machine must be on an allowed network or have a service endpoint).
-info "Logging in to ACR via Azure AD token..."
-az acr login --name "$ACR_NAME"
 
 BUILD_TAG="$(date +%Y%m%d%H%M%S)"
 ADMIN_IMAGE="${ACR_LOGIN_SERVER}/admin-site:${BUILD_TAG}"
@@ -349,24 +345,53 @@ CUSTOMER_IMAGE="${ACR_LOGIN_SERVER}/customer-site:${BUILD_TAG}"
 ADMIN_LATEST="${ACR_LOGIN_SERVER}/admin-site:latest"
 CUSTOMER_LATEST="${ACR_LOGIN_SERVER}/customer-site:latest"
 
-info "Building admin-site image (tag: $BUILD_TAG)..."
-DOCKER_BUILDKIT=1 docker build \
-    --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-    --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-    -f "$SCRIPT_DIR/Dockerfile.admin-site" \
-    -t "$ADMIN_IMAGE" -t "$ADMIN_LATEST" "$REPO_ROOT"
+# Detect build method: use local Docker if daemon is available, otherwise az acr build
+if docker info >/dev/null 2>&1; then
+    info "Docker daemon detected — building locally and pushing to ACR..."
+    az acr login --name "$ACR_NAME" ${ACR_SUBSCRIPTION:+--subscription "$ACR_SUBSCRIPTION"}
 
-info "Building customer-site image (tag: $BUILD_TAG)..."
-DOCKER_BUILDKIT=1 docker build \
-    --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-    --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-    -f "$SCRIPT_DIR/Dockerfile.customer-site" \
-    -t "$CUSTOMER_IMAGE" -t "$CUSTOMER_LATEST" "$REPO_ROOT"
+    info "Building admin-site (tag: $BUILD_TAG)..."
+    DOCKER_BUILDKIT=1 docker build \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        -f "$SCRIPT_DIR/Dockerfile.admin-site" \
+        -t "$ADMIN_IMAGE" -t "$ADMIN_LATEST" "$REPO_ROOT"
 
-info "Pushing images to ACR..."
-docker push "$ADMIN_IMAGE" && docker push "$ADMIN_LATEST"
-docker push "$CUSTOMER_IMAGE" && docker push "$CUSTOMER_LATEST"
-info "Images pushed (tag: $BUILD_TAG)"
+    info "Building customer-site (tag: $BUILD_TAG)..."
+    DOCKER_BUILDKIT=1 docker build \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        -f "$SCRIPT_DIR/Dockerfile.customer-site" \
+        -t "$CUSTOMER_IMAGE" -t "$CUSTOMER_LATEST" "$REPO_ROOT"
+
+    info "Pushing images to ACR..."
+    docker push "$ADMIN_IMAGE" && docker push "$ADMIN_LATEST"
+    docker push "$CUSTOMER_IMAGE" && docker push "$CUSTOMER_LATEST"
+else
+    info "No Docker daemon — using az acr build (remote build in ACR)..."
+
+    info "Building admin-site (tag: $BUILD_TAG)..."
+    acr_az acr build \
+        --registry "$ACR_NAME" \
+        --image "admin-site:${BUILD_TAG}" \
+        --image "admin-site:latest" \
+        --file "$SCRIPT_DIR/Dockerfile.admin-site" \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        "$REPO_ROOT"
+
+    info "Building customer-site (tag: $BUILD_TAG)..."
+    acr_az acr build \
+        --registry "$ACR_NAME" \
+        --image "customer-site:${BUILD_TAG}" \
+        --image "customer-site:latest" \
+        --file "$SCRIPT_DIR/Dockerfile.customer-site" \
+        --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+        --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+        "$REPO_ROOT"
+fi
+
+info "Images ready (tag: $BUILD_TAG)"
 
 # ── ACR network: whitelist Web App outbound IPs ───────────────────────────────
 # Adds a Web App's outbound IPs to the ACR's network allowlist.
