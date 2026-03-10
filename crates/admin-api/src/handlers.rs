@@ -351,6 +351,8 @@ pub async fn save_plan_by_guid(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     if let Some(events) = &body.plan_events {
+        // Upsert each submitted row and collect the IDs that should be kept.
+        let mut keep_ids: Vec<i32> = Vec::new();
         for e in events {
             let insert = data::repositories::PlanEventsMappingInsert {
                 id: e.id.unwrap_or(0),
@@ -360,12 +362,19 @@ pub async fn save_plan_by_guid(
                 failure_state_emails: e.failure_state_emails.clone(),
                 copy_to_customer: e.copy_to_customer,
             };
-            state
+            let saved_id = state
                 .plan_events_repo
                 .upsert(&insert)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            }
+            keep_ids.push(saved_id);
+        }
+        // Delete any rows that were removed in the UI (not in the submitted set).
+        state
+            .plan_events_repo
+            .delete_not_in(plan.id, &keep_ids)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     if let Some(ids) = &body.offer_attribute_ids {
         state
@@ -462,6 +471,22 @@ pub async fn save_offer_attributes(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     Ok(StatusCode::OK)
+}
+
+/// DELETE /api/offers/by-guid/:guid/attributes/:attr_id
+pub async fn delete_offer_attribute(
+    State(state): State<AppState>,
+    Path((_guid, attr_id)): Path<(Uuid, i32)>,
+) -> Result<StatusCode, StatusCode> {
+    state
+        .offer_attributes_repo
+        .delete(attr_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to delete offer attribute {}: {}", attr_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn get_application_configs(

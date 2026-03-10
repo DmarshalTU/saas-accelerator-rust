@@ -39,7 +39,7 @@ impl MeteredPlanSchedulerRepository for PostgresMeteredPlanSchedulerRepository {
             "SELECT id, scheduler_name, subscription_id, plan_id, dimension_id, frequency_id, quantity, start_date, next_run_time 
              FROM metered_plan_scheduler_management"
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -49,7 +49,7 @@ impl MeteredPlanSchedulerRepository for PostgresMeteredPlanSchedulerRepository {
              FROM metered_plan_scheduler_management WHERE id = $1"
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -65,7 +65,7 @@ impl MeteredPlanSchedulerRepository for PostgresMeteredPlanSchedulerRepository {
         .bind(row.frequency_id)
         .bind(row.quantity)
         .bind(row.start_date)
-        .fetch_one(&self.pool)
+        .fetch_one(&{self.pool.get()})
         .await?;
         Ok(id)
     }
@@ -73,7 +73,7 @@ impl MeteredPlanSchedulerRepository for PostgresMeteredPlanSchedulerRepository {
     async fn delete_by_id(&self, id: i32) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM metered_plan_scheduler_management WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
         Ok(())
     }
@@ -84,7 +84,7 @@ impl MeteredPlanSchedulerRepository for PostgresMeteredPlanSchedulerRepository {
         )
         .bind(next_run_time)
         .bind(id)
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
 
         Ok(())

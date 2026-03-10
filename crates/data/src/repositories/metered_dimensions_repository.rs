@@ -24,7 +24,7 @@ impl MeteredDimensionsRepository for PostgresMeteredDimensionsRepository {
             "SELECT id, plan_id, dimension, description, created_date FROM metered_dimensions WHERE plan_id = $1 ORDER BY dimension",
         )
         .bind(plan_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 }

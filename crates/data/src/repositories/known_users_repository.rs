@@ -35,7 +35,7 @@ impl KnownUsersRepository for PostgresKnownUsersRepository {
         sqlx::query_as::<_, KnownUser>(
             "SELECT id, user_email, role_id FROM known_users ORDER BY user_email",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -45,13 +45,13 @@ impl KnownUsersRepository for PostgresKnownUsersRepository {
         )
         .bind(email)
         .bind(role_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
     async fn save_all(&self, users: &[KnownUserInsert]) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM known_users")
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
         for u in users {
             sqlx::query(
@@ -59,7 +59,7 @@ impl KnownUsersRepository for PostgresKnownUsersRepository {
             )
             .bind(&u.user_email)
             .bind(u.role_id)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
         }
         Ok(())

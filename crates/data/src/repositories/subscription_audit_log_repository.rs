@@ -45,7 +45,7 @@ impl SubscriptionAuditLogRepository for PostgresSubscriptionAuditLogRepository {
         .bind(&log.new_value)
         .bind(log.create_date.unwrap_or_else(Utc::now))
         .bind(log.create_by)
-        .fetch_one(&self.pool)
+        .fetch_one(&{self.pool.get()})
         .await?;
 
         Ok(result)
@@ -64,7 +64,7 @@ impl SubscriptionAuditLogRepository for PostgresSubscriptionAuditLogRepository {
              ORDER BY create_date DESC"
         )
         .bind(subscription_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -77,7 +77,7 @@ impl SubscriptionAuditLogRepository for PostgresSubscriptionAuditLogRepository {
              ORDER BY sal.create_date DESC"
         )
         .bind(subscription_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -97,7 +97,7 @@ impl SubscriptionAuditLogRepository for PostgresSubscriptionAuditLogRepository {
         .bind(subscription_status)
         .bind(error_description)
         .bind(Some(chrono::Utc::now()))
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
         Ok(())
     }

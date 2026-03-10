@@ -119,6 +119,8 @@ export const offersApi = {
   getByGuid: (guid: string) => adminApi.get<OfferWithAttributes>(`/offers/by-guid/${guid}`),
   saveAttributes: (guid: string, attributes: Array<{ id?: number; parameter_id?: string; display_name?: string; description?: string; type?: string; values_list?: string }>) =>
     adminApi.put(`/offers/by-guid/${guid}/attributes`, { attributes }),
+  deleteAttribute: (guid: string, attrId: number) =>
+    adminApi.delete(`/offers/by-guid/${guid}/attributes/${attrId}`),
 };
 
 export interface OfferAttribute {
@@ -249,5 +251,7 @@ export const customerApiEndpoints = {
     customerApi.patch(`/subscriptions/${id}/plan`, { plan_id: planId }),
   changeQuantity: (id: string, quantity: number) =>
     customerApi.patch(`/subscriptions/${id}/quantity`, { quantity }),
+  cancelSubscription: (id: string) =>
+    customerApi.post(`/subscriptions/${id}/cancel`),
 };
 

@@ -1,13 +1,17 @@
-# Run database migrations with sqlx-cli
-# Same Rust/Debian base as main Dockerfile (trixie for glibc consistency)
-FROM rust:1.93.1-slim-trixie
+# syntax=docker/dockerfile:1.4
+# DB migration runner. Uses the same base image as the API for glibc consistency.
+# ARG REGISTRY_PREFIX controls the base image registry (docker.io or ACR pull-through cache).
 
-RUN apt-get update && apt-get install -y \
-    libssl-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+ARG REGISTRY_PREFIX=docker.io
+FROM ${REGISTRY_PREFIX}/library/rust:1.83-slim-bookworm
 
-RUN cargo install sqlx-cli --no-default-features --features postgres,native-tls
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libssl-dev pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo install sqlx-cli --no-default-features --features postgres,native-tls --locked 2>/dev/null || \
+    cargo install sqlx-cli --no-default-features --features postgres,native-tls
 
 WORKDIR /app
 COPY crates/data/migrations ./migrations

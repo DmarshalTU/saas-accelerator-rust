@@ -23,7 +23,7 @@ impl SchedulerFrequencyRepository for PostgresSchedulerFrequencyRepository {
         sqlx::query_as::<_, SchedulerFrequency>(
             "SELECT id, frequency FROM scheduler_frequency ORDER BY id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 }

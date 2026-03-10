@@ -26,7 +26,7 @@ impl ApplicationConfigRepository for PostgresApplicationConfigRepository {
             "SELECT value FROM application_configuration WHERE name = $1"
         )
         .bind(name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await?;
 
         Ok(result.flatten())
@@ -36,7 +36,7 @@ impl ApplicationConfigRepository for PostgresApplicationConfigRepository {
         sqlx::query_as::<_, ApplicationConfiguration>(
             "SELECT id, name, value, description FROM application_configuration"
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -47,7 +47,7 @@ impl ApplicationConfigRepository for PostgresApplicationConfigRepository {
         )
         .bind(name)
         .bind(value)
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
 
         Ok(())

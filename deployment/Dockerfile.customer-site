@@ -1,15 +1,21 @@
+# syntax=docker/dockerfile:1.4
 # Customer site: customer-api (Rust) + static UI (React), served by nginx.
-# Build: docker build --build-arg VITE_ADMIN_API_URL=... --build-arg VITE_CUSTOMER_API_URL=... -f deployment/Dockerfile.customer-site .
+#
+# Build args:
+#   REGISTRY_PREFIX   Base-image registry. "docker.io" (default/local) or
+#                     "<acr>.azurecr.io/cache" (ACR pull-through cache).
+#   VITE_ADMIN_API_URL / VITE_CUSTOMER_API_URL  Baked into the React bundle.
+
+ARG REGISTRY_PREFIX=docker.io
 
 # ── Rust build ─────────────────────────────────────────────────────────────────
-FROM rust:1.93.1-slim-trixie AS api-builder
+FROM ${REGISTRY_PREFIX}/library/rust:1.83-slim-bookworm AS api-builder
 WORKDIR /app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends pkg-config libssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy manifests first so dependency layer is cached when only source changes.
 COPY Cargo.toml Cargo.lock ./
 COPY crates/admin-api/Cargo.toml   crates/admin-api/Cargo.toml
 COPY crates/customer-api/Cargo.toml crates/customer-api/Cargo.toml
@@ -20,7 +26,6 @@ COPY crates/shared/Cargo.toml       crates/shared/Cargo.toml
 COPY crates/data/Cargo.toml         crates/data/Cargo.toml
 COPY crates/marketplace/Cargo.toml  crates/marketplace/Cargo.toml
 
-# Create stub binaries so cargo can resolve the full dep graph and cache it.
 RUN mkdir -p \
     crates/admin-api/src crates/customer-api/src crates/webhook-api/src \
     crates/webhook/src crates/scheduler/src crates/shared/src \
@@ -34,16 +39,18 @@ RUN mkdir -p \
     printf 'pub fn lib() {}' > crates/data/src/lib.rs && \
     printf 'pub fn lib() {}' > crates/marketplace/src/lib.rs
 
-# Pre-build deps with stubs to cache the dependency layer.
-RUN cargo build --release --locked --bin customer-api 2>/dev/null || true
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked --bin customer-api 2>/dev/null || true
 
-# Now copy real source and build.
 COPY crates ./crates
-RUN cargo build --release --locked --bin customer-api && \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked --bin customer-api && \
     cp /app/target/release/customer-api /usr/local/bin/customer-api
 
 # ── Frontend build ─────────────────────────────────────────────────────────────
-FROM node:20-alpine AS frontend-builder
+FROM ${REGISTRY_PREFIX}/library/node:20-alpine AS frontend-builder
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json ./
@@ -57,22 +64,22 @@ ENV VITE_ADMIN_API_URL=$VITE_ADMIN_API_URL \
     VITE_CUSTOMER_API_URL=$VITE_CUSTOMER_API_URL
 RUN npm run build
 
-# ── Runtime image ──────────────────────────────────────────────────────────────
-FROM debian:trixie-slim
+# ── Runtime ────────────────────────────────────────────────────────────────────
+FROM ${REGISTRY_PREFIX}/library/debian:bookworm-slim
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates libssl3 nginx && \
+    apt-get install -y --no-install-recommends ca-certificates libssl3 nginx curl && \
     rm -rf /var/lib/apt/lists/* && \
     rm -f /etc/nginx/sites-enabled/default
 
 WORKDIR /app
-COPY --from=api-builder  /usr/local/bin/customer-api   /app/customer-api
-COPY --from=frontend-builder /app/dist                 /usr/share/nginx/html
+COPY --from=api-builder  /usr/local/bin/customer-api  /app/customer-api
+COPY --from=frontend-builder /app/dist                /usr/share/nginx/html
 COPY deployment/nginx-customer-site.conf /etc/nginx/sites-enabled/default
 COPY deployment/entrypoint-site.sh       /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && sed -i 's/\r$//' /app/entrypoint.sh
 
 EXPOSE 80
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD curl -f http://localhost/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+    CMD curl -sf http://localhost/health || exit 1
 ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"]
 CMD ["customer-api"]

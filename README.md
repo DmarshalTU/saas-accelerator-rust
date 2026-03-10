@@ -1,197 +1,208 @@
-# SaaS Accelerator - Rust Edition
+# SaaS Accelerator — Rust Edition
 
-A modern, high-performance port of the Microsoft Commercial Marketplace SaaS Accelerator to Rust, providing better developer experience, hot reload capabilities, and cross-platform deployment.
+A complete port of the [Microsoft Commercial Marketplace SaaS Accelerator](https://github.com/Azure/Commercial-Marketplace-SaaS-Accelerator) to **Rust + React**, with improved security, performance, and deployment tooling.
 
-inspired by [Commercial-Marketplace-SaaS-Accelerator](https://github.com/Azure/Commercial-Marketplace-SaaS-Accelerator)
+## Architecture
 
-## Architecture: two deployable sites (like the original)
+Two deployable sites — same model as the original:
 
-Deployment matches the **original SaaS Accelerator**: **Admin** and **Customer** are separate deployables for security, cost, and isolation. See [docs/TWO_SITE_DEPLOYMENT.md](docs/TWO_SITE_DEPLOYMENT.md).
+| Site | Crate | Purpose |
+|------|-------|---------|
+| **Admin** | `crates/admin-api` (port 3000) | Publisher portal: subscriptions, plans, offers, config, scheduler, email templates, known users |
+| **Customer** | `crates/customer-api` (port 3001) | Customer landing page, subscription management, **and** marketplace webhook |
 
-| Site | Contents | Purpose |
-|------|----------|---------|
-| **Admin** | admin-api + Admin UI | Publisher portal (subscriptions, plans, offers, config). One Azure Web App / image. |
-| **Customer** | customer-api + webhook + Customer UI | Landing page, customer subscriptions, **and** webhook (same app as in original). One Azure Web App / image. |
+Shared crates: `shared` (auth, secrets, services), `data` (repositories, models, pool), `marketplace` (fulfillment + metering API clients), `webhook`, `scheduler`.
 
-### Workspace crates
+Frontend: **React + TypeScript + Vite** in `frontend/` — one codebase, two routes (`/` = customer, `/admin` = publisher).
 
-- **`crates/admin-api`** – Admin site backend (Port 3000). Serves Admin UI when deployed.
-- **`crates/customer-api`** – Customer site backend (Port 3001). Includes webhook at `POST /api/webhook`. Serves Customer UI when deployed.
-- **`crates/webhook-api`** – Optional standalone webhook server (Port 3002). For two-site deploy, webhook runs inside customer-api.
-- **`crates/scheduler`** – Background job for metered billing
-- **`crates/shared`**, **`crates/data`**, **`crates/marketplace`** – Shared logic, DB, marketplace clients
+---
 
-### Frontend (React + TypeScript) — **this is the UI**
+## Quick start (local dev)
 
-- **`frontend/`** – The web UI (React + Vite). Run it with:
-  ```bash
-  cd frontend && npm install && npm run dev
-  ```
-  Then open **http://localhost:5173** (Customer) or **http://localhost:5173/admin** (Admin). Start the APIs first (e.g. `docker compose up -d` or run the binaries).  
-  For **how this deploys to Azure** (one frontend project, two Web Apps), see [docs/AZURE_DEPLOYMENT.md](docs/AZURE_DEPLOYMENT.md).
-
-## Features
-
-- 🚀 **High Performance** - Rust's zero-cost abstractions and memory safety
-- 🔥 **Hot Reload** - Frontend hot reload with modern SPA framework
-- 🔐 **Azure Integration** - Uses official Azure SDK for Rust
-- 🗄️ **PostgreSQL** - Better Linux support than SQL Server
-- 🌐 **Cross-Platform** - Deploy to Linux, Windows, or macOS
-- 📦 **Modular** - Separate frontend/backend for team collaboration
-
-## Prerequisites
-
-- Rust 1.70+ (`rustup install stable`)
-- PostgreSQL 14+ (or Azure Database for PostgreSQL)
-- Azure CLI (for deployment)
-- Node.js 18+ (for frontend development)
-
-## Quick Start
-
-### Backend Development
+### Option A — Docker Compose (recommended)
 
 ```bash
-# Install dependencies
-cargo build
-
-# Run database migrations
-cd crates/data
-sqlx migrate run
-
-# Run admin API
-cargo run --bin admin-api
-
-# Run customer API  
-cargo run --bin customer-api
-
-# Run webhook API
-cargo run --bin webhook-api
-
-# Run scheduler
-cargo run --bin scheduler
-```
-
-### Frontend Development
-
-```bash
-cd frontend
-npm install
-npm run dev  # Hot reload enabled at http://localhost:5173
-```
-
-### Docker Compose (backend + UI)
-
-```bash
+# Clone, then:
 docker compose up -d
 ```
 
-Starts PostgreSQL (with migrations), Admin API (3000), Customer API (3001), optional Webhook API (3002), and the **UI** (5173). Default DB: user `saas`, password `saas`, database `saas_accelerator`. See [docs/TESTING_IN_ACTION.md](docs/TESTING_IN_ACTION.md) for details and optional `.env` overrides.
+- Admin portal: **http://localhost:3000**
+- Customer portal: **http://localhost:3001**
 
-**Note:** Open **http://localhost:5173** for the React app (Customer at `/`, Admin at `/admin`). Ports 3000 and 3001 serve the REST APIs (and a small root info page). For the **full Admin/Customer web UIs** (like the .NET “sites”), use Frontend Development for hot reload.
+Default DB: `postgresql://saas:saas@localhost:5432/saas_accelerator`  
+Override with a `.env` file — see the comments in `docker-compose.yml`.
 
-### Setup Script
-
-For first-time setup, run:
-
-```bash
-./scripts/setup.sh
-```
-
-This will:
-- Check prerequisites (Rust, PostgreSQL, Node.js)
-- Build the Rust workspace
-- Install frontend dependencies
-- Create `.env` file from template
-
-## Testing
-
-Build and run all tests:
+### Option B — Run locally
 
 ```bash
-# Using Make
-make build    # Build the whole workspace
-make test     # Run all tests
-make check    # Build then test
+# Prerequisites: Rust (stable), PostgreSQL 14+, Node.js 20+, sqlx-cli
 
-# Or using Cargo directly
-cargo build --workspace
-cargo test --workspace
+# 1. Migrations
+cd crates/data && DATABASE_URL=... sqlx migrate run && cd ../..
+
+# 2. APIs (separate terminals)
+DATABASE_URL=... cargo run -p admin-api     # http://localhost:3000
+DATABASE_URL=... cargo run -p customer-api  # http://localhost:3001
+
+# 3. Frontend dev server (hot reload)
+cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
-Tests include:
-- **shared**: Model serialization (WebhookAction, TermUnitEnum, SubscriptionStatus), URL validation
-- **admin-api**, **customer-api**, **webhook-api**: Health endpoint (router tests)
-
-See **PORTING_CHECKLIST.md** for a feature-by-feature comparison with the original Microsoft SaaS Accelerator and how to verify the port.
-
-## Test in action (run the APIs locally)
-
-To run the services and hit them with real requests:
-
-1. **Database**: Create a PostgreSQL database, set `DATABASE_URL` in `.env`, then run migrations:
-   ```bash
-   cd crates/data && sqlx migrate run && cd ../..
-   ```
-2. **Start the APIs** (each in its own terminal):
-   ```bash
-   cargo run -p admin-api      # port 3000
-   cargo run -p customer-api  # port 3001
-   cargo run -p webhook-api   # port 3002
-   ```
-3. **Smoke test** (with all three running):
-   ```bash
-   ./scripts/smoke-test.sh
-   ```
-4. **Try endpoints**: e.g. `curl http://localhost:3000/health`, `curl http://localhost:3001/api/landing`, etc.
-
-Full steps and curl examples: **[docs/TESTING_IN_ACTION.md](docs/TESTING_IN_ACTION.md)**.
+---
 
 ## Configuration
 
-Create a `.env` file in the root directory:
+### Local dev (`.env` in repo root)
 
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/saas_accelerator
-AZURE_TENANT_ID=your-tenant-id
-AZURE_CLIENT_ID=your-client-id
-AZURE_CLIENT_SECRET=your-client-secret
-MARKETPLACE_API_BASE_URL=https://marketplaceapi.microsoft.com/api
+DATABASE_URL=postgresql://saas:saas@localhost:5432/saas_accelerator
+RUST_LOG=info
+
+# Optional — enables marketplace API calls
+SaaS_API_TENANT_ID=
+SaaS_API_CLIENT_ID=
+SaaS_API_CLIENT_SECRET=
+
+# Optional — enables Azure AD login on admin portal
+AZURE_AD_TENANT_ID=
+AZURE_AD_CLIENT_ID=
+AZURE_AD_CLIENT_SECRET=
+AZURE_AD_REDIRECT_URI=http://localhost:3000/auth/callback
+AZURE_AD_SIGNED_OUT_REDIRECT_URI=http://localhost:3000/admin
 ```
+
+When `AZURE_AD_*` vars are absent, admin routes are open (dev mode).
+
+### Production (Azure Web Apps)
+
+In Azure, authentication is layered:
+1. **Azure AD login** — web app reads `AZURE_AD_*` env vars, authenticates the user
+2. **Known Users check** — after login, the user's email must be in the `known_users` table with `role_id = 1`
+3. **PostgreSQL — passwordless AAD auth** — set `AZURE_AD_AUTH=true`; the app fetches a short-lived OAuth2 token via Managed Identity instead of using a password
+4. **Key Vault** — `ADApplicationSecret` (AD app secret) stored in KV; app reads it at startup via Managed Identity
+
+App settings in Azure (non-secrets — set directly):
+
+| Setting | Description |
+|---------|-------------|
+| `AZURE_AD_AUTH` | `true` — enables passwordless PostgreSQL |
+| `DB_HOST` | PostgreSQL server hostname |
+| `DB_NAME` | Database name |
+| `KEY_VAULT_URL` | e.g. `https://mycompany-kv.vault.azure.net` |
+| `SaaS_API_CLIENT_ID` | Fulfillment API app registration ID |
+| `SaaS_API_TENANT_ID` | Azure AD tenant ID |
+| `AZURE_AD_CLIENT_ID` | Admin SSO app registration ID |
+| `CORS_ALLOWED_ORIGINS` | e.g. `https://mycompany-admin.azurewebsites.net` |
+
+---
+
+## Security model
+
+| Layer | Mechanism |
+|-------|-----------|
+| Admin API routes | Session (Azure AD login) + Known Users (admin role) |
+| Customer API routes | Marketplace JWT token (webhook), or email-based lookup |
+| Secrets | Azure Key Vault — only `ADApplicationSecret`; no credentials in app settings |
+| DB auth (production) | Azure AD Managed Identity — no password, token refreshed every 45 min |
+| DB auth (local) | Standard postgres URL in `DATABASE_URL` |
+| TLS | HTTPS-only enforced at App Service level; TLS 1.2+ |
+| CORS | Locked to `CORS_ALLOWED_ORIGINS`; not permissive |
+| Session cookies | Secure flag when running in Azure (`WEBSITE_SITE_NAME` present) |
+| ACR pull | Managed Identity `AcrPull` role — no registry credentials stored |
+| NSG | DB subnet: port 5432 allowed only from web/ACI subnets |
+
+---
 
 ## Deployment to Azure
 
-Deployment follows the **same model as the [original SaaS Accelerator](https://github.com/Azure/Commercial-Marketplace-SaaS-Accelerator)**: two separate Azure Web Apps (Admin and Customer), one shared database.
+One-command initial deployment:
 
-### Security when deployed
+```bash
+cd deployment
+cp .env.template .env   # fill in required values
+./deploy.sh --prefix myco --location "East US" \
+  --publisher-admin-users "admin@myco.com"
+```
 
-| Question | Answer |
-|----------|--------|
-| **Is Admin secured?** | **Yes** when Azure AD is configured. Admin API requires login (session) and, when Azure AD is set, the user must be in **Known Users** (admin role). Otherwise 401/403. |
-| **Can customers log into Admin by accident?** | **No.** Admin and Customer are **different URLs** (different Web Apps). Customers use only the customer URL. |
-| **Docker / local without Azure AD?** | Admin API is **open** for development. Set Azure AD env vars and add Known Users to secure it. |
+The script creates: Resource Group → VNet + NSG → PostgreSQL (private, AAD-enabled) → Key Vault (purge-protected) → ACR → App Service Plan → Admin + Customer Web Apps (container, Managed Identity, HTTPS-only, FTP disabled) → runs DB migrations → seeds Known Users → health-checks.
 
-### Steps (high level)
+**Re-runs are safe** — every section checks if the resource exists before creating it.
 
-1. **Two Azure Web Apps** – One for Admin (admin-api + UI), one for Customer (customer-api + webhook + UI). Same frontend `dist/` deployed to both; each app uses its own API base URL.
-2. **Database** – One Azure PostgreSQL (or compatible) instance; same connection string for both apps.
-3. **Admin app settings** – Set `DATABASE_URL`, Marketplace API vars (`SaaS_API_TENANT_ID`, `SaaS_API_CLIENT_ID`, `SaaS_API_CLIENT_SECRET`), and **Azure AD** vars: `AZURE_AD_TENANT_ID`, `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`, `AZURE_AD_REDIRECT_URI` (e.g. `https://<admin-host>/auth/callback`), `AZURE_AD_SIGNED_OUT_REDIRECT_URI`.
-4. **Customer app settings** – Set `DATABASE_URL` and Marketplace API vars. No Azure AD needed.
-5. **Build frontend once** with production API URLs, then deploy the same `dist/` to both Web Apps:
-   ```bash
-   cd frontend
-   export VITE_ADMIN_API_URL=https://<your-admin-host>
-   export VITE_CUSTOMER_API_URL=https://<your-customer-host>
-   npm ci && npm run build
-   ```
-6. **Known Users** – After first deploy, add publisher emails to Known Users (Admin UI) with admin role so they can access the admin API.
+**Skip flags** (speed up re-runs):
 
-**Full details:** [docs/AZURE_DEPLOYMENT.md](docs/AZURE_DEPLOYMENT.md) (routing, static files, security checklist). The original .NET accelerator uses [Deploy.ps1](https://github.com/Azure/Commercial-Marketplace-SaaS-Accelerator/blob/main/deployment/Deploy.ps1) and [Installation-Instructions.md](https://github.com/Azure/Commercial-Marketplace-SaaS-Accelerator/blob/main/docs/Installation-Instructions.md); this port uses the same two-Web-App, shared-DB design; you can use your own CI/CD or the scripts in `deployment/` to deploy the Rust binaries and frontend.
+```bash
+./deploy.sh --prefix myco --location "East US" \
+  --publisher-admin-users "admin@myco.com" \
+  --skip-appregistrations --skip-network --skip-db --skip-kv
+```
+
+**Upgrade** (rebuild images + migrate + deploy):
+
+```bash
+./deployment/upgrade.sh --prefix myco
+# or reuse the latest image:
+./deployment/upgrade.sh --prefix myco --skip-build
+```
+
+**Optional: ACR pull-through cache** (avoids DockerHub rate limits, speeds up builds ~30%):
+
+```bash
+# Add to deployment/.env:
+DOCKERHUB_USERNAME=myuser
+DOCKERHUB_TOKEN=dckr_pat_...   # Docker Hub access token
+```
+
+On the next deploy run, credentials are stored in Key Vault and ACR cache rules are created for `rust`, `node`, `debian` base images.
+
+**Build cache** (Docker BuildKit layer cache stored in ACR):  
+All builds use `--cache-from/--cache-to type=registry,mode=max` automatically. First build: ~20 min. Subsequent builds with cache: **2–5 min**.
+
+Full details: [docs/AZURE_DEPLOYMENT.md](docs/AZURE_DEPLOYMENT.md)
+
+---
+
+## Testing
+
+```bash
+cargo test --workspace           # unit + integration tests
+cargo clippy --workspace --all-targets -- -D warnings   # zero warnings allowed
+cd frontend && npm audit --audit-level=high             # zero high/critical vulns
+cd frontend && npm run build                            # production build
+```
+
+---
+
+## Codebase structure
+
+```
+saas-accelerator-rust/
+├── crates/
+│   ├── admin-api/      Admin REST API + Azure AD auth middleware
+│   ├── customer-api/   Customer REST API + webhook
+│   ├── webhook/        Shared webhook handler (embedded in customer-api)
+│   ├── webhook-api/    Optional standalone webhook server
+│   ├── scheduler/      Metered billing background job
+│   ├── shared/         Models, secrets (KV + AAD pool refresh), services
+│   ├── data/           PostgreSQL repositories (SharedPool + AAD token refresh)
+│   └── marketplace/    Azure Marketplace fulfillment + metering API clients
+├── frontend/           React + TypeScript + Vite (admin and customer UI)
+├── deployment/
+│   ├── deploy.sh       Full infrastructure + container deployment
+│   ├── upgrade.sh      Rebuild images + migrate + redeploy
+│   ├── Dockerfile.admin-site
+│   ├── Dockerfile.customer-site
+│   ├── Dockerfile.migrate
+│   ├── nginx-admin-site.conf
+│   ├── nginx-customer-site.conf
+│   └── .env.template
+├── docker-compose.yml  Local development
+└── docs/
+    ├── AZURE_DEPLOYMENT.md   Full Azure deployment guide + security checklist
+    └── CODE_REVIEW.md        Lint configuration and review notes
+```
+
+---
 
 ## License
 
-MIT License - See LICENSE file
-
-## Contributing
-
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
-
+MIT — see [LICENSE](LICENSE)

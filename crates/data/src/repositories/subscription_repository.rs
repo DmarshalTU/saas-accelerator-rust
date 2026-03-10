@@ -65,7 +65,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
              FROM subscriptions WHERE id = $1",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -80,7 +80,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
              FROM subscriptions WHERE amp_subscription_id = $1",
         )
         .bind(amp_subscription_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -91,7 +91,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
              purchaser_email, purchaser_tenant_id, term, start_date, end_date 
              FROM subscriptions ORDER BY create_date DESC",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -103,7 +103,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
              FROM subscriptions WHERE user_id = $1 ORDER BY create_date DESC",
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -133,7 +133,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
         .bind(&subscription.term)
         .bind(subscription.start_date)
         .bind(subscription.end_date)
-        .fetch_one(&self.pool)
+        .fetch_one(&{self.pool.get()})
         .await?;
 
         Ok(result)
@@ -165,7 +165,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
         .bind(&subscription.term)
         .bind(subscription.start_date)
         .bind(subscription.end_date)
-        .fetch_one(&self.pool)
+        .fetch_one(&{self.pool.get()})
         .await
     }
 
@@ -210,7 +210,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
                 .bind(sub_id)
             },
         );
-        query.fetch_all(&self.pool).await
+        query.fetch_all(&{self.pool.get()}).await
     }
 
     async fn save(&self, subscription: &Subscription) -> Result<i32, sqlx::Error> {
@@ -247,7 +247,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
         .bind(status)
         .bind(is_active)
         .bind(Some(chrono::Utc::now()))
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
         Ok(())
     }
@@ -265,7 +265,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
         .bind(subscription_id)
         .bind(plan_id)
         .bind(Some(chrono::Utc::now()))
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
         Ok(())
     }
@@ -283,7 +283,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
         .bind(subscription_id)
         .bind(quantity)
         .bind(Some(chrono::Utc::now()))
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
         Ok(())
     }
@@ -291,7 +291,7 @@ impl SubscriptionRepository for PostgresSubscriptionRepository {
     async fn delete(&self, id: i32) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM subscriptions WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
         Ok(())
     }

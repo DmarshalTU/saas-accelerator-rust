@@ -33,7 +33,7 @@ impl MeteredAuditLogRepository for PostgresMeteredAuditLogRepository {
              ORDER BY created_date DESC",
         )
         .bind(subscription_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 }

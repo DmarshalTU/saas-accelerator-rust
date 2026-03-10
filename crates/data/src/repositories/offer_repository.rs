@@ -28,7 +28,7 @@ impl OfferRepository for PostgresOfferRepository {
             "SELECT id, offer_id, offer_name, offer_guid, create_date, user_id FROM offers WHERE id = $1",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -37,7 +37,7 @@ impl OfferRepository for PostgresOfferRepository {
             "SELECT id, offer_id, offer_name, offer_guid, create_date, user_id FROM offers WHERE offer_guid = $1",
         )
         .bind(offer_guid)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -46,7 +46,7 @@ impl OfferRepository for PostgresOfferRepository {
             "SELECT id, offer_id, offer_name, offer_guid, create_date, user_id FROM offers WHERE offer_id = $1",
         )
         .bind(offer_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -54,7 +54,7 @@ impl OfferRepository for PostgresOfferRepository {
         sqlx::query_as::<_, Offer>(
             "SELECT id, offer_id, offer_name, offer_guid, create_date, user_id FROM offers",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 }

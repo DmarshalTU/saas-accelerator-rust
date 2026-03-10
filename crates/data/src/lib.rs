@@ -1,6 +1,6 @@
 //! Data layer: `PostgreSQL` models and repositories.
 #![allow(
-    clippy::missing_const_for_fn, // DbPool (PgPool) is not valid in const context
+    clippy::missing_const_for_fn, // DbPool (SharedPool) is not valid in const context
     clippy::needless_raw_string_hashes, // SQL strings often use r#" for readability
     clippy::must_use_candidate, // repository constructors
 )]

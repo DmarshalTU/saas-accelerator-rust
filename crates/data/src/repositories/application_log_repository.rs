@@ -29,7 +29,7 @@ impl ApplicationLogRepository for PostgresApplicationLogRepository {
         )
         .bind(log_detail.action_time)
         .bind(&log_detail.log_detail)
-        .fetch_one(&self.pool)
+        .fetch_one(&{self.pool.get()})
         .await?;
 
         Ok(result)
@@ -42,7 +42,7 @@ impl ApplicationLogRepository for PostgresApplicationLogRepository {
         .bind(log_detail.id)
         .bind(log_detail.action_time)
         .bind(&log_detail.log_detail)
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
 
         Ok(log_detail.id)
@@ -52,7 +52,7 @@ impl ApplicationLogRepository for PostgresApplicationLogRepository {
         sqlx::query_as::<_, ApplicationLog>(
             "SELECT id, action_time, log_detail FROM application_log ORDER BY action_time DESC",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 }

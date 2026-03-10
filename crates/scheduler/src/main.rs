@@ -260,11 +260,12 @@ async fn save_audit_log(
     subscription_id: uuid::Uuid,
 ) -> Result<(), sqlx::Error> {
     // Get subscription database ID
+    let pg = pool.get();
     let sub_db_id: Option<i32> = sqlx::query_scalar(
         "SELECT id FROM subscriptions WHERE amp_subscription_id = $1"
     )
     .bind(subscription_id)
-    .fetch_optional(pool)
+    .fetch_optional(&pg)
     .await?;
 
     if let Some(sub_id) = sub_db_id {
@@ -282,7 +283,7 @@ async fn save_audit_log(
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(format!("Scheduler-{scheduler_id}"))
-        .execute(pool)
+        .execute(&pg)
         .await?;
     }
 

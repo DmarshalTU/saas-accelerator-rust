@@ -25,7 +25,7 @@ impl EventsRepository for PostgresEventsRepository {
             "SELECT id, events_name, is_active, create_date FROM events WHERE events_name = $1 LIMIT 1",
         )
         .bind(name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -33,7 +33,7 @@ impl EventsRepository for PostgresEventsRepository {
         sqlx::query_as::<_, Events>(
             "SELECT id, events_name, is_active, create_date FROM events ORDER BY id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 }

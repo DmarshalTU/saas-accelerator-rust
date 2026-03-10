@@ -16,6 +16,7 @@ pub trait OfferAttributesRepository: Send + Sync {
         &self,
         offer_guid: Uuid,
     ) -> Result<Vec<OfferAttributes>, sqlx::Error>;
+    async fn delete(&self, offer_attribute_id: i32) -> Result<(), sqlx::Error>;
 }
 
 pub struct PostgresOfferAttributesRepository {
@@ -36,7 +37,7 @@ impl OfferAttributesRepository for PostgresOfferAttributesRepository {
              FROM offer_attributes WHERE id = $1",
         )
         .bind(offer_attributes.id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await?;
 
         if let Some(existing_attr) = existing {
@@ -50,7 +51,7 @@ impl OfferAttributesRepository for PostgresOfferAttributesRepository {
             .bind(&offer_attributes.description)
             .bind(&offer_attributes.type_)
             .bind(&offer_attributes.values_list)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
             Ok(Some(existing_attr.id))
         } else {
@@ -66,7 +67,7 @@ impl OfferAttributesRepository for PostgresOfferAttributesRepository {
             .bind(&offer_attributes.type_)
             .bind(&offer_attributes.values_list)
             .bind(chrono::Utc::now())
-            .fetch_one(&self.pool)
+            .fetch_one(&{self.pool.get()})
             .await?;
             Ok(Some(result.id))
         }
@@ -77,7 +78,7 @@ impl OfferAttributesRepository for PostgresOfferAttributesRepository {
             "SELECT id, offer_id, parameter_id, display_name, description, type, values_list, create_date
              FROM offer_attributes",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -92,7 +93,7 @@ impl OfferAttributesRepository for PostgresOfferAttributesRepository {
              WHERE o.offer_guid = $1 AND oa.type = 'input'",
         )
         .bind(offer_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -102,7 +103,7 @@ impl OfferAttributesRepository for PostgresOfferAttributesRepository {
              FROM offer_attributes WHERE id = $1",
         )
         .bind(offer_attribute_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -117,8 +118,16 @@ impl OfferAttributesRepository for PostgresOfferAttributesRepository {
              WHERE o.offer_guid = $1",
         )
         .bind(offer_guid)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
+    }
+
+    async fn delete(&self, offer_attribute_id: i32) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM offer_attributes WHERE id = $1")
+            .bind(offer_attribute_id)
+            .execute(&{self.pool.get()})
+            .await?;
+        Ok(())
     }
 }
 

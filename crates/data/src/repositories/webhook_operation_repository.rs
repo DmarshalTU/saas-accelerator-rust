@@ -25,7 +25,7 @@ impl WebhookOperationRepository for PostgresWebhookOperationRepository {
             "SELECT EXISTS(SELECT 1 FROM webhook_processed_operations WHERE operation_id = $1)",
         )
         .bind(operation_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&{self.pool.get()})
         .await?;
         Ok(row.0)
     }
@@ -35,7 +35,7 @@ impl WebhookOperationRepository for PostgresWebhookOperationRepository {
             "INSERT INTO webhook_processed_operations (operation_id) VALUES ($1) ON CONFLICT (operation_id) DO NOTHING",
         )
         .bind(operation_id)
-        .execute(&self.pool)
+        .execute(&{self.pool.get()})
         .await?;
         Ok(())
     }

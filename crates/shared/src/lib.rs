@@ -15,3 +15,4 @@ pub mod errors;
 pub mod auth;
 pub mod services;
 pub mod utilities;
+pub mod secrets;

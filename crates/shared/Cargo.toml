@@ -34,6 +34,10 @@ async-trait = "0.1"
 tracing = { workspace = true }
 url = "2.5"
 oauth2 = { workspace = true }
+# Azure SDK — Key Vault (secret resolution) + identity (Managed Identity / AAD tokens)
+azure_identity = { workspace = true }
+azure_security_keyvault = { workspace = true }
+azure_core = { workspace = true }
 
 [features]
 default = []

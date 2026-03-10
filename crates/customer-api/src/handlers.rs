@@ -208,6 +208,44 @@ pub async fn change_quantity(
     })))
 }
 
+pub async fn cancel_subscription(
+    State(state): State<AppState>,
+    Path(subscription_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    info!("Customer cancelling subscription {}", subscription_id);
+
+    let subscription = state
+        .subscription_repo
+        .get_by_amp_subscription_id(subscription_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let _operation_id = state
+        .fulfillment_client
+        .delete_subscription(subscription_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to cancel subscription: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Mark as Unsubscribed locally so the UI updates immediately
+    let mut updated = subscription;
+    updated.subscription_status = "Unsubscribed".to_string();
+    updated.is_active = Some(false);
+    state
+        .subscription_repo
+        .save(&updated)
+        .await
+        .map_err(|e| {
+            error!("Failed to update subscription status after cancel: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(serde_json::json!({ "status": "cancelled" })))
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub subscription_repo: Arc<dyn SubscriptionRepository>,

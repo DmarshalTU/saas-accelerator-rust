@@ -28,7 +28,7 @@ impl UserRepository for PostgresUserRepository {
             "SELECT user_id, email_address, created_date, full_name FROM users WHERE user_id = $1",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -37,7 +37,7 @@ impl UserRepository for PostgresUserRepository {
             "SELECT user_id, email_address, created_date, full_name FROM users WHERE email_address = $1",
         )
         .bind(email)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -54,7 +54,7 @@ impl UserRepository for PostgresUserRepository {
         .bind(&user.email_address)
         .bind(Some(chrono::Utc::now()))
         .bind(&user.full_name)
-        .fetch_one(&self.pool)
+        .fetch_one(&{self.pool.get()})
         .await?;
 
         Ok(result)
@@ -68,7 +68,7 @@ impl UserRepository for PostgresUserRepository {
             .bind(user.user_id)
             .bind(&user.email_address)
             .bind(&user.full_name)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
             Ok(user.user_id)
         } else {

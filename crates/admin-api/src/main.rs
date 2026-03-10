@@ -37,10 +37,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting Admin API server");
 
-    // Database connection
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set");
-    let pool = create_pool(&database_url).await?;
+    // ── Secrets + database pool ───────────────────────────────────────────────
+    // AZURE_AD_AUTH=true  → passwordless via Managed Identity (production, 100% secure)
+    // Otherwise           → password from KEY_VAULT_URL or DATABASE_URL (local dev / migration)
+    let (pool, saas_client_secret) =
+        if std::env::var("AZURE_AD_AUTH").as_deref() == Ok("true") {
+            let db_host = std::env::var("DB_HOST")
+                .expect("DB_HOST required when AZURE_AD_AUTH=true");
+            let db_name = std::env::var("DB_NAME")
+                .expect("DB_NAME required when AZURE_AD_AUTH=true");
+            // Username = managed identity display name = WEBSITE_SITE_NAME (the web app name)
+            let db_user = std::env::var("DB_USER")
+                .or_else(|_| std::env::var("WEBSITE_SITE_NAME"))
+                .expect("DB_USER or WEBSITE_SITE_NAME required when AZURE_AD_AUTH=true");
+            info!("AAD auth enabled — fetching PostgreSQL token via Managed Identity");
+            let token = shared::secrets::fetch_postgres_aad_token().await
+                .expect("Failed to fetch AAD token for PostgreSQL");
+            let pool_aad = data::pool::create_pool_with_token(&db_host, &db_user, &db_name, &token)
+                .await?;
+            // Refresh the pool every 45 min — AAD tokens for PostgreSQL expire at 60 min
+            {
+                let refresh_pool = pool_aad.clone();
+                let (host, user, name) = (db_host.clone(), db_user.clone(), db_name.clone());
+                tokio::spawn(async move {
+                    let interval = std::time::Duration::from_secs(45 * 60);
+                    loop {
+                        tokio::time::sleep(interval).await;
+                        match shared::secrets::fetch_postgres_aad_token().await {
+                            Ok(token) => {
+                                match data::pool::create_pool_with_token(&host, &user, &name, &token).await {
+                                    Ok(new_pool) => {
+                                        refresh_pool.replace(new_pool.get());
+                                        tracing::info!("PostgreSQL pool refreshed with new AAD token");
+                                    }
+                                    Err(e) => tracing::error!("Pool refresh failed: {e}"),
+                                }
+                            }
+                            Err(e) => tracing::error!("AAD token refresh failed: {e}"),
+                        }
+                    }
+                });
+            }
+            let ad_secret = shared::secrets::resolve_ad_secret().await
+                .unwrap_or_default();
+            (pool_aad, ad_secret)
+        } else {
+            let secrets = shared::secrets::resolve_secrets().await
+                .expect("Failed to resolve secrets — check KEY_VAULT_URL / DATABASE_URL");
+            let ad_secret = secrets.saas_api_client_secret.clone();
+            (create_pool(&secrets.database_url).await?, ad_secret)
+        };
 
     // Marketplace API client
     let marketplace_base_url = std::env::var("MARKETPLACE_API_BASE_URL")
@@ -52,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_client_secret(
             &std::env::var("SaaS_API_TENANT_ID").unwrap_or_default(),
             &std::env::var("SaaS_API_CLIENT_ID").unwrap_or_default(),
-            &std::env::var("SaaS_API_CLIENT_SECRET").unwrap_or_default(),
+            &saas_client_secret,
         )
         .build();
     let fulfillment_client = Arc::new(FulfillmentApiClient::new(marketplace_client.clone(), api_version.clone()));
@@ -133,8 +179,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Setup session management. HandleErrorLayer converts session errors to HTTP 500 (axum 0.7 requires Infallible).
     let session_store = MemoryStore::default();
+    // Use secure cookies in production (HTTPS). In Azure App Service HTTPS_ONLY is enforced at the
+    // platform level so the request arrives over HTTP to the container but was HTTPS to the client.
+    let is_production = std::env::var("WEBSITE_SITE_NAME").is_ok();
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(false) // Set to true in production with HTTPS
+        .with_secure(is_production)
         .with_same_site(tower_sessions::cookie::SameSite::Lax);
     let session_layer = ServiceBuilder::new()
         .layer(HandleErrorLayer::new(|e: BoxError| async move {
@@ -169,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/offers", get(handlers::get_offers))
         .route("/api/offers/by-guid/:guid", get(handlers::get_offer_by_guid))
         .route("/api/offers/by-guid/:guid/attributes", axum::routing::put(handlers::save_offer_attributes))
+        .route("/api/offers/by-guid/:guid/attributes/:attr_id", axum::routing::delete(handlers::delete_offer_attribute))
         .route("/api/config", get(handlers::get_application_configs))
         .route("/api/config/upload", post(handlers::upload_config_file))
         .route("/api/config/:name", axum::routing::put(handlers::update_application_config))
@@ -192,7 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(app_state)
         .layer(session_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(tower_http::cors::CorsLayer::permissive());
+        .layer(build_cors_layer());
 
     // Start server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
@@ -201,6 +251,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// CORS: allow only the configured origin(s).
+/// In production the frontend is served from the same nginx (same origin) so CORS
+/// is not strictly required, but we set an explicit allowlist for defence in depth.
+/// `CORS_ALLOWED_ORIGINS` can be a comma-separated list of origins.
+/// Defaults to localhost (local dev only).
+fn build_cors_layer() -> tower_http::cors::CorsLayer {
+    use axum::http::{header, Method};
+    use tower_http::cors::CorsLayer;
+
+    let origins: Vec<axum::http::HeaderValue> = std::env::var("CORS_ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:5173,http://localhost:3000".to_string())
+        .split(',')
+        .filter_map(|o| o.trim().parse().ok())
+        .collect();
+
+    CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            Method::GET, Method::POST, Method::PUT,
+            Method::PATCH, Method::DELETE, Method::OPTIONS,
+        ])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::ACCEPT])
+        .allow_credentials(true)
 }
 
 async fn admin_root_page() -> Html<&'static str> {

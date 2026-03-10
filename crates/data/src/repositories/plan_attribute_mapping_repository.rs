@@ -26,14 +26,14 @@ impl PlanAttributeMappingRepository for PostgresPlanAttributeMappingRepository {
              FROM plan_attribute_mapping WHERE plan_id = $1 ORDER BY plan_attribute_id",
         )
         .bind(plan_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
     async fn replace_for_plan(&self, plan_id: i32, offer_attribute_ids: &[i32]) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM plan_attribute_mapping WHERE plan_id = $1")
             .bind(plan_id)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
         for &offer_attribute_id in offer_attribute_ids {
             sqlx::query(
@@ -41,7 +41,7 @@ impl PlanAttributeMappingRepository for PostgresPlanAttributeMappingRepository {
             )
             .bind(plan_id)
             .bind(offer_attribute_id)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
         }
         Ok(())

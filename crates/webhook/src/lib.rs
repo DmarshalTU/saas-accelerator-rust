@@ -144,7 +144,7 @@ async fn handle_webhook(
 }
 
 /// Builds webhook state from a DB pool. Use in customer-api (embed in AppState) or webhook-api.
-pub async fn build_state(pool: sqlx::PgPool) -> Result<WebhookState, anyhow::Error> {
+pub async fn build_state(pool: data::pool::DbPool) -> Result<WebhookState, anyhow::Error> {
     let subscription_repo: Arc<dyn SubscriptionRepository> =
         Arc::new(data::repositories::PostgresSubscriptionRepository::new(pool.clone()));
     let plan_repo: Arc<dyn PlanRepository> =

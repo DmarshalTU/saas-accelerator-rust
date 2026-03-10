@@ -10,10 +10,11 @@
 *.swo
 *~
 
-# Environment
+# Environment — never commit real secrets
 .env
 .env.local
 .env.*.local
+deployment/.env
 
 # Database
 *.db
@@ -21,6 +22,9 @@
 
 # Logs
 *.log
+deployment/deploy-*.log
+deployment/upgrade-*.log
+deployment/build-*.log
 
 # OS
 .DS_Store

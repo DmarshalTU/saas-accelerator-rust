@@ -36,7 +36,7 @@ impl EmailTemplateRepository for PostgresEmailTemplateRepository {
              FROM email_template WHERE status = $1",
         )
         .bind(status)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -52,7 +52,7 @@ impl EmailTemplateRepository for PostgresEmailTemplateRepository {
              LIMIT 1",
         )
         .bind(subscription_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await?;
         
         Ok(result.and_then(|r| r.0).unwrap_or_default())
@@ -63,7 +63,7 @@ impl EmailTemplateRepository for PostgresEmailTemplateRepository {
             "SELECT id, status, description, insert_date, template_body, subject, to_recipients, cc, bcc, is_active
              FROM email_template ORDER BY status",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -76,7 +76,7 @@ impl EmailTemplateRepository for PostgresEmailTemplateRepository {
              FROM email_template WHERE status = $1",
         )
         .bind(&template.status)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await?;
 
         if let Some(existing_template) = existing {
@@ -93,7 +93,7 @@ impl EmailTemplateRepository for PostgresEmailTemplateRepository {
             .bind(&template.to_recipients)
             .bind(&template.bcc)
             .bind(&template.cc)
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
             Ok("Updated".to_string())
         } else {
@@ -110,7 +110,7 @@ impl EmailTemplateRepository for PostgresEmailTemplateRepository {
             .bind(&template.bcc)
             .bind(template.is_active)
             .bind(chrono::Utc::now())
-            .execute(&self.pool)
+            .execute(&{self.pool.get()})
             .await?;
             Ok("Created".to_string())
         }

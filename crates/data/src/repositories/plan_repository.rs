@@ -32,7 +32,7 @@ impl PlanRepository for PostgresPlanRepository {
              FROM plans WHERE id = $1",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -43,7 +43,7 @@ impl PlanRepository for PostgresPlanRepository {
              FROM plans WHERE plan_id = $1",
         )
         .bind(plan_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -54,7 +54,7 @@ impl PlanRepository for PostgresPlanRepository {
              FROM plans WHERE offer_id = $1",
         )
         .bind(offer_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 
@@ -65,7 +65,7 @@ impl PlanRepository for PostgresPlanRepository {
              FROM plans WHERE plan_guid = $1",
         )
         .bind(plan_guid)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&{self.pool.get()})
         .await
     }
 
@@ -79,7 +79,7 @@ impl PlanRepository for PostgresPlanRepository {
              is_per_user, plan_guid, offer_id 
              FROM plans",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&{self.pool.get()})
         .await
     }
 }
