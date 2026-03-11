@@ -637,10 +637,15 @@ else
     ACI_SUBNET_ID=$(az network vnet subnet show -g "$RESOURCE_GROUP" \
         --vnet-name "$VNET_NAME" -n aci --query id -o tsv 2>/dev/null || true)
 
+    # Get a short-lived ACR access token for ACI to pull the migrate image.
+    # Username must be the literal string "00000000-0000-0000-0000-000000000000" when using tokens.
+    ACR_TOKEN=$(az acr login -n "$ACR_NAME" --expose-token --query accessToken -o tsv)
+
     az container create -g "$RESOURCE_GROUP" -n "$MIGRATE_JOB" \
         --image "${ACR_LOGIN_SERVER}/migrate:latest" \
         --registry-login-server "$ACR_LOGIN_SERVER" \
-        --assign-identity \
+        --registry-username "00000000-0000-0000-0000-000000000000" \
+        --registry-password "$ACR_TOKEN" \
         --os-type Linux --cpu 1 --memory 1 --restart-policy Never \
         ${ACI_SUBNET_ID:+--vnet "$VNET_NAME" --subnet aci} \
         --secure-environment-variables "DATABASE_URL=${DATABASE_URL:-}" \
