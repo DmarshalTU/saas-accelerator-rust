@@ -536,7 +536,7 @@ TASKYAML
         _acr_build customer-site Dockerfile.customer-site
 
         info "  Building migrate via ACR Tasks (BuildKit)..."
-        local migrate_task="${REPO_ROOT}/.acr-task-migrate.yml"
+        migrate_task="${REPO_ROOT}/.acr-task-migrate.yml"
         cat > "$migrate_task" <<TASKYAML
 version: v1.1.0
 steps:
