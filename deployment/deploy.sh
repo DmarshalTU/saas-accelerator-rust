@@ -397,6 +397,7 @@ REGISTRY_PREFIX="docker.io"   # default; overridden if ACR pull-through cache is
 if [[ "$SKIP_ACR" == "true" ]]; then
     warn "Skipping ACR setup (--skip-acr)"
     ACR_LOGIN_SERVER=$(acr_az acr show -n "$ACR_NAME" --query loginServer -o tsv 2>/dev/null || true)
+    ACR_ID=$(acr_az acr show -n "$ACR_NAME" --query id -o tsv 2>/dev/null || true)
 else
     section "Container Registry"
 
