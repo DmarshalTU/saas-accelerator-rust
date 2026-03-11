@@ -493,34 +493,72 @@ else
 
     if [[ "$BUILD_METHOD" == "acr" ]]; then
         # ── ACR Tasks fallback (no local Docker required) ─────────────────────
-        # Runs builds in Azure; no layer-cache support but works from Cloud Shell.
+        # Uses az acr run with a task YAML to enable BuildKit (required for
+        # --mount=type=cache in the Dockerfiles).
         _acr_build() {
             local name="$1" dockerfile="$2"
-            info "  Building ${name} via ACR Tasks..."
-            acr_az acr build \
+            info "  Building ${name} via ACR Tasks (BuildKit)..."
+
+            local task_file
+            task_file=$(mktemp /tmp/acr-task-XXXXXX.yml)
+
+            cat > "$task_file" <<TASKYAML
+version: v1.1.0
+steps:
+  - id: build
+    build: >-
+      -f deployment/${dockerfile}
+      --build-arg REGISTRY_PREFIX=${REGISTRY_PREFIX}
+      --build-arg VITE_ADMIN_API_URL=${ADMIN_URL}
+      --build-arg VITE_CUSTOMER_API_URL=${CUSTOMER_URL}
+      -t ${name}:${BUILD_TAG}
+      -t ${name}:latest
+      .
+    env:
+      - DOCKER_BUILDKIT=1
+  - id: push
+    push:
+      - ${name}:${BUILD_TAG}
+      - ${name}:latest
+TASKYAML
+
+            acr_az acr run \
                 --registry "$ACR_NAME" \
-                --image "${name}:${BUILD_TAG}" \
-                --image "${name}:latest" \
-                --file "${SCRIPT_DIR}/${dockerfile}" \
-                --build-arg "REGISTRY_PREFIX=${REGISTRY_PREFIX}" \
-                --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-                --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-                --platform linux \
+                --file "$task_file" \
                 "${REPO_ROOT}"
+
+            rm -f "$task_file"
             info "  ✓ ${name} built and pushed"
         }
 
         _acr_build admin-site    Dockerfile.admin-site
         _acr_build customer-site Dockerfile.customer-site
 
-        info "  Building migrate via ACR Tasks..."
-        acr_az acr build \
+        info "  Building migrate via ACR Tasks (BuildKit)..."
+        local migrate_task
+        migrate_task=$(mktemp /tmp/acr-task-XXXXXX.yml)
+        cat > "$migrate_task" <<TASKYAML
+version: v1.1.0
+steps:
+  - id: build
+    build: >-
+      -f deployment/Dockerfile.migrate
+      --build-arg REGISTRY_PREFIX=${REGISTRY_PREFIX}
+      -t migrate:latest
+      .
+    env:
+      - DOCKER_BUILDKIT=1
+  - id: push
+    push:
+      - migrate:latest
+TASKYAML
+
+        acr_az acr run \
             --registry "$ACR_NAME" \
-            --image "migrate:latest" \
-            --file "${SCRIPT_DIR}/Dockerfile.migrate" \
-            --build-arg "REGISTRY_PREFIX=${REGISTRY_PREFIX}" \
-            --platform linux \
+            --file "$migrate_task" \
             "${REPO_ROOT}"
+
+        rm -f "$migrate_task"
         info "  ✓ migrate built and pushed"
 
     else
