@@ -685,8 +685,11 @@ _ensure_webapp() {
     if az webapp show -n "$app_name" -g "$RESOURCE_GROUP" -o none 2>/dev/null; then
         info "  Web App exists: $app_name — updating config"
     else
+        # Create with a public placeholder image. The real ACR image is set only
+        # after Managed Identity + AcrPull role are configured below, to avoid
+        # ImagePullUnauthorized failures on first start.
         az webapp create -g "$RESOURCE_GROUP" -p "$APP_PLAN" -n "$app_name" \
-            --deployment-container-image-name "$image" -o none
+            --deployment-container-image-name "mcr.microsoft.com/appsvc/staticsite:latest" -o none
         info "  Web App created: $app_name"
     fi
 
@@ -699,9 +702,8 @@ _ensure_webapp() {
         "WEBSITES_ENABLE_APP_SERVICE_STORAGE=false" \
         "$@" -o none
 
-    # Container image + hardening
+    # Hardening (without setting the real image yet)
     az webapp config set -n "$app_name" -g "$RESOURCE_GROUP" \
-        --linux-fx-version "DOCKER|${image}" \
         --always-on true --http20-enabled true \
         --min-tls-version "1.2" \
         --ftps-state Disabled \
@@ -712,7 +714,7 @@ _ensure_webapp() {
     az webapp vnet-integration add -n "$app_name" -g "$RESOURCE_GROUP" \
         --vnet "$VNET_NAME" --subnet web -o none 2>/dev/null || true
 
-    # System identity + AcrPull
+    # System identity + AcrPull — must be done before setting the real image
     IDENTITY=$(az webapp identity assign -n "$app_name" -g "$RESOURCE_GROUP" \
         --identities "[system]" --query principalId -o tsv)
     acr_az role assignment create --assignee "$IDENTITY" --role AcrPull --scope "$ACR_ID" -o none 2>/dev/null || true
@@ -729,6 +731,10 @@ _ensure_webapp() {
     az webapp config appsettings delete -n "$app_name" -g "$RESOURCE_GROUP" \
         --setting-names "DOCKER_REGISTRY_SERVER_USERNAME" "DOCKER_REGISTRY_SERVER_PASSWORD" \
         -o none 2>/dev/null || true
+
+    # Set the real ACR image now that identity + role are in place
+    az webapp config set -n "$app_name" -g "$RESOURCE_GROUP" \
+        --linux-fx-version "DOCKER|${image}" -o none
 }
 
 if [[ "$SKIP_WEBAPPS" == "true" ]]; then
@@ -829,6 +835,9 @@ fi
 # 11. RESTART + HEALTH CHECK
 # =============================================================================
 section "Restart + health check"
+# Allow time for AcrPull RBAC assignments to propagate before the apps try to pull
+info "Waiting 60s for RBAC propagation..."
+sleep 60
 for app_name in "$ADMIN_APP" "$CUSTOMER_APP"; do
     az webapp restart -n "$app_name" -g "$RESOURCE_GROUP" -o none 2>/dev/null || true
     info "  Restarted: $app_name"
