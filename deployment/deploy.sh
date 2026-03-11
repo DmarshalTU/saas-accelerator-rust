@@ -331,7 +331,7 @@ else
 
     # Enable AAD + password auth; allow uuid-ossp extension
     az postgres flexible-server update -g "$RESOURCE_GROUP" -n "$DB_SERVER_NAME" \
-        --active-directory-auth Enabled --password-auth Enabled -o none 2>/dev/null || true
+        --microsoft-entra-auth Enabled --password-auth Enabled -o none
     az postgres flexible-server parameter set -g "$RESOURCE_GROUP" -s "$DB_SERVER_NAME" \
         --name azure.extensions --value uuid-ossp -o none 2>/dev/null || true
 
@@ -770,7 +770,7 @@ else
     # Register managed identity as PostgreSQL AAD user
     ADMIN_OBJ=$(az webapp identity show -n "$ADMIN_APP" -g "$RESOURCE_GROUP" \
         --query principalId -o tsv 2>/dev/null || true)
-    [[ -n "$ADMIN_OBJ" ]] && az postgres flexible-server ad-admin create \
+    [[ -n "$ADMIN_OBJ" ]] && az postgres flexible-server microsoft-entra-admin create \
         -g "$RESOURCE_GROUP" -s "$DB_SERVER_NAME" \
         --display-name "$ADMIN_APP" --object-id "$ADMIN_OBJ" -o none 2>/dev/null || true
 
@@ -791,7 +791,7 @@ else
 
     CUSTOMER_OBJ=$(az webapp identity show -n "$CUSTOMER_APP" -g "$RESOURCE_GROUP" \
         --query principalId -o tsv 2>/dev/null || true)
-    [[ -n "$CUSTOMER_OBJ" ]] && az postgres flexible-server ad-admin create \
+    [[ -n "$CUSTOMER_OBJ" ]] && az postgres flexible-server microsoft-entra-admin create \
         -g "$RESOURCE_GROUP" -s "$DB_SERVER_NAME" \
         --display-name "$CUSTOMER_APP" --object-id "$CUSTOMER_OBJ" -o none 2>/dev/null || true
 
