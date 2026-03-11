@@ -512,8 +512,11 @@ steps:
       --build-arg REGISTRY_PREFIX=${REGISTRY_PREFIX}
       --build-arg VITE_ADMIN_API_URL=${ADMIN_URL}
       --build-arg VITE_CUSTOMER_API_URL=${CUSTOMER_URL}
+      --build-arg BUILDKIT_INLINE_CACHE=1
+      --cache-from \$Registry/buildcache/${name}:cache
       -t \$Registry/${name}:${BUILD_TAG}
       -t \$Registry/${name}:latest
+      -t \$Registry/buildcache/${name}:cache
       .
     env:
       - DOCKER_BUILDKIT=1
@@ -521,6 +524,7 @@ steps:
     push:
       - \$Registry/${name}:${BUILD_TAG}
       - \$Registry/${name}:latest
+      - \$Registry/buildcache/${name}:cache
 TASKYAML
 
             acr_az acr run \
@@ -544,13 +548,17 @@ steps:
     build: >-
       -f deployment/Dockerfile.migrate
       --build-arg REGISTRY_PREFIX=${REGISTRY_PREFIX}
+      --build-arg BUILDKIT_INLINE_CACHE=1
+      --cache-from \$Registry/buildcache/migrate:cache
       -t \$Registry/migrate:latest
+      -t \$Registry/buildcache/migrate:cache
       .
     env:
       - DOCKER_BUILDKIT=1
   - id: push
     push:
       - \$Registry/migrate:latest
+      - \$Registry/buildcache/migrate:cache
 TASKYAML
 
         acr_az acr run \
