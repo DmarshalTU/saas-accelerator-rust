@@ -9,7 +9,7 @@
 ARG REGISTRY_PREFIX=docker.io
 
 # ── Rust build ─────────────────────────────────────────────────────────────────
-FROM ${REGISTRY_PREFIX}/library/rust:1.83-slim-bookworm AS api-builder
+FROM ${REGISTRY_PREFIX}/library/rust:1.94.0-slim-bookworm AS api-builder
 WORKDIR /app
 
 RUN apt-get update && \

@@ -3,7 +3,7 @@
 # ARG REGISTRY_PREFIX controls the base image registry (docker.io or ACR pull-through cache).
 
 ARG REGISTRY_PREFIX=docker.io
-FROM ${REGISTRY_PREFIX}/library/rust:1.83-slim-bookworm
+FROM ${REGISTRY_PREFIX}/library/rust:1.94.0-slim-bookworm
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libssl-dev pkg-config && \
