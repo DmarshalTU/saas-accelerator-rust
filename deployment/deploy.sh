@@ -276,10 +276,14 @@ fi
 # =============================================================================
 if [[ "$SKIP_DB" == "true" ]]; then
     warn "Skipping PostgreSQL (--skip-db)"
-    # Try to read password from KV for later use
-    DATABASE_URL=$(az keyvault secret show --vault-name "$KEY_VAULT" \
+    # Temporarily open KV so we can read the password from Cloud Shell / CI
+    az keyvault update -n "$KEY_VAULT" -g "$RESOURCE_GROUP" --default-action Allow -o none 2>/dev/null || true
+    DB_ADMIN_PASS=$(az keyvault secret show --vault-name "$KEY_VAULT" \
         --name "DatabasePassword" --query value -o tsv 2>/dev/null || true)
-    DB_ADMIN_PASS="$DATABASE_URL"  # just a placeholder; will read properly below
+    az keyvault update -n "$KEY_VAULT" -g "$RESOURCE_GROUP" --default-action Deny -o none 2>/dev/null || true
+    [[ -z "$DB_ADMIN_PASS" ]] && die "Could not read DatabasePassword from Key Vault $KEY_VAULT"
+    DATABASE_URL="postgresql://${DB_ADMIN_USER}:${DB_ADMIN_PASS}@${DB_HOST}:5432/${DB_NAME}?sslmode=require"
+    info "Database URL resolved from Key Vault"
 else
     section "PostgreSQL"
     # Re-use existing password so existing connections aren't broken
