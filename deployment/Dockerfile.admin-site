@@ -48,6 +48,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # Copy real source and rebuild (only changed crates recompile).
 COPY crates ./crates
+# Touch sources so their mtime is newer than the stub artifacts in the BuildKit
+# cache mount — without this, Cargo may skip recompilation and deploy the stub.
+RUN find crates -name "*.rs" -exec touch {} +
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release --locked --bin admin-api && \
