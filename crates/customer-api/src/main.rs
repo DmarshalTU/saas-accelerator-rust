@@ -25,6 +25,7 @@ use tracing::info;
 #[allow(clippy::too_many_lines)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stdout)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 

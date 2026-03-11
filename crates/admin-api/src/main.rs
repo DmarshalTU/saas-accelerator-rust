@@ -29,6 +29,7 @@ use tracing::info;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
     tracing_subscriber::fmt()
+        .with_writer(std::io::stdout)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
