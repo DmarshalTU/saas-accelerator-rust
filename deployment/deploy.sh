@@ -482,56 +482,97 @@ if [[ "$SKIP_BUILD" == "true" ]]; then
 else
     section "Docker build + push  (tag: $BUILD_TAG)"
 
-    # ACR login via Azure AD token
-    info "ACR login..."
-    acr_az acr login -n "$ACR_NAME"
+    # Detect whether a Docker daemon is reachable
+    if docker info &>/dev/null 2>&1; then
+        BUILD_METHOD="docker"
+        info "Build method: local Docker (buildx)"
+    else
+        BUILD_METHOD="acr"
+        warn "Docker daemon not available — falling back to ACR Tasks (builds run in Azure)"
+    fi
 
-    # Ensure buildx builder exists
-    docker buildx create --name saas-builder --driver docker-container \
-        --use 2>/dev/null || docker buildx use saas-builder
-    docker buildx inspect --bootstrap > /dev/null 2>&1
+    if [[ "$BUILD_METHOD" == "acr" ]]; then
+        # ── ACR Tasks fallback (no local Docker required) ─────────────────────
+        # Runs builds in Azure; no layer-cache support but works from Cloud Shell.
+        _acr_build() {
+            local name="$1" dockerfile="$2"
+            info "  Building ${name} via ACR Tasks..."
+            acr_az acr build \
+                --registry "$ACR_NAME" \
+                --image "${name}:${BUILD_TAG}" \
+                --image "${name}:latest" \
+                --file "${SCRIPT_DIR}/${dockerfile}" \
+                --build-arg "REGISTRY_PREFIX=${REGISTRY_PREFIX}" \
+                --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+                --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+                --platform linux \
+                "${REPO_ROOT}"
+            info "  ✓ ${name} built and pushed"
+        }
 
-    _buildx() {
-        local name="$1" dockerfile="$2"
-        local cache_ref="${ACR_LOGIN_SERVER}/buildcache/${name}"
-        docker buildx build \
-            --platform linux/amd64 \
-            --cache-from "type=registry,ref=${cache_ref}" \
-            --cache-to  "type=registry,ref=${cache_ref},mode=max" \
+        _acr_build admin-site    Dockerfile.admin-site
+        _acr_build customer-site Dockerfile.customer-site
+
+        info "  Building migrate via ACR Tasks..."
+        acr_az acr build \
+            --registry "$ACR_NAME" \
+            --image "migrate:latest" \
+            --file "${SCRIPT_DIR}/Dockerfile.migrate" \
             --build-arg "REGISTRY_PREFIX=${REGISTRY_PREFIX}" \
-            --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
-            --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
-            -f "${SCRIPT_DIR}/${dockerfile}" \
-            --tag "${ACR_LOGIN_SERVER}/${name}:${BUILD_TAG}" \
-            --tag "${ACR_LOGIN_SERVER}/${name}:latest" \
-            --push "${REPO_ROOT}" \
-            > "${SCRIPT_DIR}/build-${name//-site/}.log" 2>&1
-    }
+            --platform linux \
+            "${REPO_ROOT}"
+        info "  ✓ migrate built and pushed"
 
-    info "Building all images in parallel (BuildKit layer cache enabled)..."
-    _buildx admin-site    Dockerfile.admin-site    & ADMIN_PID=$!
-    _buildx customer-site Dockerfile.customer-site & CUSTOMER_PID=$!
-    docker buildx build --platform linux/amd64 \
-        --cache-from "type=registry,ref=${ACR_LOGIN_SERVER}/buildcache/migrate" \
-        --cache-to  "type=registry,ref=${ACR_LOGIN_SERVER}/buildcache/migrate,mode=max" \
-        --build-arg "REGISTRY_PREFIX=${REGISTRY_PREFIX}" \
-        -f "${SCRIPT_DIR}/Dockerfile.migrate" \
-        --tag "${ACR_LOGIN_SERVER}/migrate:latest" --push "${REPO_ROOT}" \
-        > "${SCRIPT_DIR}/build-migrate.log" 2>&1 &
-    MIGRATE_PID=$!
+    else
+        # ── Local Docker buildx (preferred) ───────────────────────────────────
+        acr_az acr login -n "$ACR_NAME"
 
-    FAIL=0
-    for pair in "${ADMIN_PID}:admin" "${CUSTOMER_PID}:customer" "${MIGRATE_PID}:migrate"; do
-        pid="${pair%%:*}"; name="${pair##*:}"
-        if wait "$pid"; then
-            info "  ✓ ${name} image built"
-        else
-            error "  ✗ ${name} build failed — tail of log:"
-            tail -15 "${SCRIPT_DIR}/build-${name}.log" 2>/dev/null || true
-            FAIL=1
-        fi
-    done
-    [[ "$FAIL" -eq 0 ]] || die "One or more Docker builds failed"
+        docker buildx create --name saas-builder --driver docker-container \
+            --use 2>/dev/null || docker buildx use saas-builder
+        docker buildx inspect --bootstrap > /dev/null 2>&1
+
+        _buildx() {
+            local name="$1" dockerfile="$2"
+            local cache_ref="${ACR_LOGIN_SERVER}/buildcache/${name}"
+            docker buildx build \
+                --platform linux/amd64 \
+                --cache-from "type=registry,ref=${cache_ref}" \
+                --cache-to  "type=registry,ref=${cache_ref},mode=max" \
+                --build-arg "REGISTRY_PREFIX=${REGISTRY_PREFIX}" \
+                --build-arg "VITE_ADMIN_API_URL=${ADMIN_URL}" \
+                --build-arg "VITE_CUSTOMER_API_URL=${CUSTOMER_URL}" \
+                -f "${SCRIPT_DIR}/${dockerfile}" \
+                --tag "${ACR_LOGIN_SERVER}/${name}:${BUILD_TAG}" \
+                --tag "${ACR_LOGIN_SERVER}/${name}:latest" \
+                --push "${REPO_ROOT}" \
+                > "${SCRIPT_DIR}/build-${name//-site/}.log" 2>&1
+        }
+
+        info "Building all images in parallel (BuildKit layer cache enabled)..."
+        _buildx admin-site    Dockerfile.admin-site    & ADMIN_PID=$!
+        _buildx customer-site Dockerfile.customer-site & CUSTOMER_PID=$!
+        docker buildx build --platform linux/amd64 \
+            --cache-from "type=registry,ref=${ACR_LOGIN_SERVER}/buildcache/migrate" \
+            --cache-to  "type=registry,ref=${ACR_LOGIN_SERVER}/buildcache/migrate,mode=max" \
+            --build-arg "REGISTRY_PREFIX=${REGISTRY_PREFIX}" \
+            -f "${SCRIPT_DIR}/Dockerfile.migrate" \
+            --tag "${ACR_LOGIN_SERVER}/migrate:latest" --push "${REPO_ROOT}" \
+            > "${SCRIPT_DIR}/build-migrate.log" 2>&1 &
+        MIGRATE_PID=$!
+
+        FAIL=0
+        for pair in "${ADMIN_PID}:admin" "${CUSTOMER_PID}:customer" "${MIGRATE_PID}:migrate"; do
+            pid="${pair%%:*}"; name="${pair##*:}"
+            if wait "$pid"; then
+                info "  ✓ ${name} image built"
+            else
+                error "  ✗ ${name} build failed — tail of log:"
+                tail -15 "${SCRIPT_DIR}/build-${name}.log" 2>/dev/null || true
+                FAIL=1
+            fi
+        done
+        [[ "$FAIL" -eq 0 ]] || die "One or more Docker builds failed"
+    fi
 
     section_done
 fi
