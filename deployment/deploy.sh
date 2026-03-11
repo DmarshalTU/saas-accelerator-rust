@@ -499,8 +499,9 @@ else
             local name="$1" dockerfile="$2"
             info "  Building ${name} via ACR Tasks (BuildKit)..."
 
-            local task_file
-            task_file=$(mktemp /tmp/acr-task-XXXXXX.yml)
+            # Task YAML must live inside the repo root so it is included in the
+            # uploaded source context that ACR Tasks downloads.
+            local task_file="${REPO_ROOT}/.acr-task-${name}.yml"
 
             cat > "$task_file" <<TASKYAML
 version: v1.1.0
@@ -524,7 +525,7 @@ TASKYAML
 
             acr_az acr run \
                 --registry "$ACR_NAME" \
-                --file "$task_file" \
+                --file ".acr-task-${name}.yml" \
                 "${REPO_ROOT}"
 
             rm -f "$task_file"
@@ -535,8 +536,7 @@ TASKYAML
         _acr_build customer-site Dockerfile.customer-site
 
         info "  Building migrate via ACR Tasks (BuildKit)..."
-        local migrate_task
-        migrate_task=$(mktemp /tmp/acr-task-XXXXXX.yml)
+        local migrate_task="${REPO_ROOT}/.acr-task-migrate.yml"
         cat > "$migrate_task" <<TASKYAML
 version: v1.1.0
 steps:
@@ -555,7 +555,7 @@ TASKYAML
 
         acr_az acr run \
             --registry "$ACR_NAME" \
-            --file "$migrate_task" \
+            --file ".acr-task-migrate.yml" \
             "${REPO_ROOT}"
 
         rm -f "$migrate_task"
